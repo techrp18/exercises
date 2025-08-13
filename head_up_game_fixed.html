@@ -230,7 +230,8 @@ class HeadRiseGame {
             // Upward movement has ended, calculate score
             const distance = this.startMoveY - this.headPos.y;
             if (distance > 20) {
-                const points = Math.round(distance);
+                // MODIFIED: Non-linear scoring for more reward on higher movements
+                const points = Math.round(Math.pow(distance, 1.15) * 1.5);
                 this.addScore(points);
             }
             this.isMovingUp = false;
@@ -242,7 +243,8 @@ class HeadRiseGame {
 
   addScore(points) {
       this.score += points;
-      this.score = Math.max(0, this.score); // Ensure score never goes below zero
+      // This ensures the score will never go below zero.
+      this.score = Math.max(0, this.score);
       this.showPointsPopup(points);
       this.updateUI();
 
