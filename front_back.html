@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Continuous Motion Sensor (with Markers)</title>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; overflow:hidden; background:#121212; }
+
+  #video {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh; object-fit:cover;
+    transform: scaleX(-1);
+    z-index:0;
+    opacity: 0.4;
+  }
+  
+  #gameCanvas {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  #ui {
+    position:absolute; left:20px; top:20px; z-index:20;
+    background: rgba(0,0,0,0.8); color:#fff; padding:16px; border-radius:14px;
+    min-width:320px; font-size:16px; backdrop-filter: blur(5px);
+  }
+  #ui div { margin-bottom: 8px; }
+  #ui span { font-weight: 700; font-size: 20px; }
+
+  #controls {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:20px; z-index:20; display:flex; gap:12px;
+  }
+  button {
+    background: linear-gradient(45deg,#2C3E50,#4CA1AF); color:#fff; border:0; padding:12px 22px; border-radius:25px;
+    cursor:pointer; font-weight:700; font-size: 16px; box-shadow:0 6px 20px rgba(0,0,0,0.25);
+    transition: all 0.2s ease;
+  }
+  button:hover { transform: translateY(-3px); }
+
+  #statusText {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #fff;
+    font-size: 22px;
+    text-shadow: 0px 2px 5px rgba(0,0,0,0.9);
+    z-index: 25;
+    padding: 8px 18px;
+    border-radius: 12px;
+    background: rgba(18, 18, 18, 0.7);
+  }
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+  <div id="statusText">Not Tracking</div>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="ui">
+    <div>⬆️ Total Distance Forward: <span id="forwardScore">0</span></div>
+    <div>⬇️ Total Distance Backward: <span id="backwardScore">0</span></div>
+  </div>
+
+  <div id="controls">
+    <button id="startBtn" onclick="app.start()">▶️ Start Continuous Sensor</button>
+    <button id="resetBtn" onclick="app.reset()">🔄 Reset Totals</button>
+  </div>
+
+
+<script>
+class ContinuousMotionSensor {
+  constructor() {
+    this.video = document.getElementById('video');
+    this.canvas = document.getElementById('gameCanvas');
+    this.ctx = this.canvas.getContext('2d');
+    this.statusTextEl = document.getElementById('statusText');
+    
+    this.isTracking = false;
+    this.forwardScore = 0;
+    this.backwardScore = 0;
+    
+    // --- High-Precision Tuning ---
+    this.interOcularDist = 0;
+    this.prevInterOcularDist = 0;
+    this.smoothing = 0.2;
+    this.deadzoneThreshold = 0.15;
+    this.scoreMultiplier = 2.5;
+
+    // --- Properties to store eye coordinates for drawing ---
+    this.leftEyePos = null;
+    this.rightEyePos = null;
+    
+    window.addEventListener('resize', () => {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+    });
+  }
+
+  async start() {
+    if (this.isTracking) return;
+    try {
+      this.statusTextEl.textContent = "Initializing Camera...";
+      this.canvas.width = window.innerWidth;
+      this.canvas.height = window.innerHeight;
+      this.updateUI();
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      this.video.srcObject = stream;
+      await new Promise(resolve => { this.video.onloadeddata = () => resolve(); });
+
+      const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+      pose.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+      pose.onResults(this.onPoseResults.bind(this));
+
+      const camera = new Camera(this.video, { onFrame: async () => await pose.send({image: this.video}), width: 1280, height: 720 });
+      camera.start();
+
+      this.isTracking = true;
+      document.getElementById('startBtn').textContent = '✅ Sensor Active';
+      document.getElementById('startBtn').disabled = true;
+
+      this.loop();
+
+    } catch (err) {
+      this.statusTextEl.textContent = "Error: Camera permissions denied.";
+      console.error('start error', err);
+    }
+  }
+
+  onPoseResults(results) {
+    if (results.poseLandmarks) {
+      this.statusTextEl.style.display = 'block';
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      const lm = results.poseLandmarks;
+      
+      // Store eye positions for drawing later
+      this.leftEyePos = { x: w * (1 - lm[2].x), y: h * lm[2].y };
+      this.rightEyePos = { x: w * (1 - lm[5].x), y: h * lm[5].y };
+      
+      const currentDist = Math.sqrt(Math.pow(this.leftEyePos.x - this.rightEyePos.x, 2) + Math.pow(this.leftEyePos.y - this.rightEyePos.y, 2));
+      
+      this.interOcularDist += this.smoothing * (currentDist - this.interOcularDist);
+    } else {
+       this.statusTextEl.textContent = "No person detected.";
+       this.leftEyePos = null; // Clear positions if no person is found
+       this.rightEyePos = null;
+    }
+  }
+
+  updateLogic() {
+    if (!this.isTracking || this.interOcularDist === 0) return;
+
+    if (this.prevInterOcularDist === 0) {
+        this.prevInterOcularDist = this.interOcularDist;
+        return;
+    }
+
+    const delta = this.interOcularDist - this.prevInterOcularDist;
+
+    if (delta > this.deadzoneThreshold) {
+        this.forwardScore += delta;
+        this.statusTextEl.textContent = "Moving Forward";
+    } else if (delta < -this.deadzoneThreshold) {
+        this.backwardScore += Math.abs(delta);
+        this.statusTextEl.textContent = "Moving Backward";
+    } else {
+        this.statusTextEl.textContent = "Holding Still";
+    }
+    
+    this.prevInterOcularDist = this.interOcularDist;
+    this.updateUI();
+  }
+
+  updateUI() {
+    document.getElementById('forwardScore').textContent = Math.round(this.forwardScore * this.scoreMultiplier).toString();
+    document.getElementById('backwardScore').textContent = Math.round(this.backwardScore * this.scoreMultiplier).toString();
+  }
+
+  draw() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // --- DRAW THE VISIBLE MARKERS ---
+    if(this.leftEyePos && this.rightEyePos){
+        this.ctx.fillStyle = 'rgba(255, 223, 0, 0.7)'; // A semi-transparent yellow
+        
+        // Draw circle on left eye
+        this.ctx.beginPath();
+        this.ctx.arc(this.leftEyePos.x, this.leftEyePos.y, 7, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // Draw circle on right eye
+        this.ctx.beginPath();
+        this.ctx.arc(this.rightEyePos.x, this.rightEyePos.y, 7, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+  }
+  
+  reset() {
+    this.forwardScore = 0;
+    this.backwardScore = 0;
+    this.updateUI();
+  }
+
+  loop() {
+    this.updateLogic();
+    this.draw(); 
+    if (this.isTracking) {
+        requestAnimationFrame(this.loop.bind(this));
+    }
+  }
+}
+
+const app = new ContinuousMotionSensor();
+</script>
+</body>
+</html>```

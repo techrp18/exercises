@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion Therapy - Exercise Hub</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+            padding: 40px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        h1 {
+            font-size: 3.5rem;
+            color: white;
+            margin-bottom: 15px;
+            text-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            font-weight: 700;
+        }
+
+        .subtitle {
+            font-size: 1.3rem;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 20px;
+        }
+
+        .description {
+            font-size: 1.1rem;
+            color: rgba(255, 255, 255, 0.8);
+            max-width: 800px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        .section {
+            margin-bottom: 60px;
+        }
+
+        .section-title {
+            font-size: 2.5rem;
+            color: white;
+            text-align: center;
+            margin-bottom: 40px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            position: relative;
+        }
+
+        .section-title::after {
+            content: '';
+            display: block;
+            width: 100px;
+            height: 4px;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            margin: 15px auto;
+            border-radius: 2px;
+        }
+
+        .exercises-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        .exercise-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .exercise-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+        }
+
+        .exercise-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+        }
+
+        .exercise-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            display: block;
+            text-align: center;
+        }
+
+        .exercise-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .exercise-description {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 25px;
+            text-align: center;
+        }
+
+        .exercise-features {
+            list-style: none;
+            margin-bottom: 25px;
+        }
+
+        .exercise-features li {
+            padding: 5px 0;
+            color: #555;
+            position: relative;
+            padding-left: 20px;
+        }
+
+        .exercise-features li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: #4ecdc4;
+            font-weight: bold;
+        }
+
+        .start-button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .start-button:hover {
+            background: linear-gradient(45deg, #5a6fd8, #6a42a0);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .coming-soon-section {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .coming-soon-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .coming-soon-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+        }
+
+        .coming-soon-card h3 {
+            color: white;
+            margin-bottom: 10px;
+            font-size: 1.3rem;
+        }
+
+        .coming-soon-card p {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+        }
+
+        .badge {
+            display: inline-block;
+            background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2.5rem;
+            }
+            
+            .exercises-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            .container {
+                padding: 15px;
+            }
+            
+            .section-title {
+                font-size: 2rem;
+            }
+        }
+
+        .stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏃‍♀️ Motion Therapy</h1>
+            <p class="subtitle">AI-Powered Body Movement & Exercise Platform</p>
+            <p class="description">
+                Experience the future of physical therapy and exercise with our computer vision-powered platform. 
+                Track your movements, improve your posture, and engage in interactive exercises designed to enhance your well-being.
+            </p>
+            <div class="stats-bar">
+                <div class="stat">
+                    <span class="stat-number">5</span>
+                    <span class="stat-label">Active Exercises</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number">∞</span>
+                    <span class="stat-label">Possibilities</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number">0</span>
+                    <span class="stat-label">Equipment Needed</span>
+                </div>
+            </div>
+        </header>
+
+        <section class="section">
+            <h2 class="section-title">🎯 Trunk Exercises</h2>
+            <p style="text-align: center; color: rgba(255, 255, 255, 0.9); font-size: 1.2rem; margin-bottom: 40px; max-width: 800px; margin-left: auto; margin-right: auto;">
+                Specialized exercises targeting trunk stability, core strength, and upper body movement patterns using advanced motion tracking technology.
+            </p>
+            <div class="exercises-grid">
+                <div class="exercise-card">
+                    <div class="exercise-icon">🎮</div>
+                    <h3 class="exercise-title">Ball Track Challenge</h3>
+                    <p class="exercise-description">
+                        An interactive trunk coordination game that tracks both hands simultaneously. Improve upper body control while collecting virtual balls using precise hand movements.
+                    </p>
+                    <ul class="exercise-features">
+                        <li>Bilateral hand coordination</li>
+                        <li>Trunk stability training</li>
+                        <li>Real-time motion analysis</li>
+                        <li>Progress tracking & recording</li>
+                    </ul>
+                    <button class="start-button" onclick="openExercise('ball_track_record.html')">Start Exercise</button>
+                </div>
+
+                <div class="exercise-card">
+                    <div class="exercise-icon">🎨</div>
+                    <h3 class="exercise-title">Hand & Elbow Drawing</h3>
+                    <p class="exercise-description">
+                        Enhance fine motor control and trunk stability through creative movement. Draw using controlled finger or elbow motions while maintaining postural alignment.
+                    </p>
+                    <ul class="exercise-features">
+                        <li>Fine motor coordination</li>
+                        <li>Postural control training</li>
+                        <li>Creative expression therapy</li>
+                        <li>Upper extremity mobility</li>
+                    </ul>
+                    <button class="start-button" onclick="openExercise('draw2.html')">Start Drawing</button>
+                </div>
+
+                <div class="exercise-card">
+                    <div class="exercise-icon">📏</div>
+                    <h3 class="exercise-title">Front-Back Motion Sensor</h3>
+                    <p class="exercise-description">
+                        Develop trunk flexion and extension control through forward-backward movement patterns. Improve sagittal plane mobility and postural awareness.
+                    </p>
+                    <ul class="exercise-features">
+                        <li>Sagittal plane movement</li>
+                        <li>Postural awareness training</li>
+                        <li>Trunk flexion/extension</li>
+                        <li>Balance & stability work</li>
+                    </ul>
+                    <button class="start-button" onclick="openExercise('front_back.html')">Start Tracking</button>
+                </div>
+
+                <div class="exercise-card">
+                    <div class="exercise-icon">⬆️</div>
+                    <h3 class="exercise-title">Head Rise Challenge</h3>
+                    <p class="exercise-description">
+                        Strengthen cervical spine control and improve head-trunk coordination. Focus on upward head movements while maintaining trunk stability.
+                    </p>
+                    <ul class="exercise-features">
+                        <li>Cervical spine mobility</li>
+                        <li>Head-trunk coordination</li>
+                        <li>Postural control training</li>
+                        <li>Upper cervical strengthening</li>
+                    </ul>
+                    <button class="start-button" onclick="openExercise('head_up_game_fixed.html')">Start Challenge</button>
+                </div>
+
+                <div class="exercise-card">
+                    <div class="exercise-icon">🤸‍♀️</div>
+                    <h3 class="exercise-title">Shoulder Touch Game</h3>
+                    <p class="exercise-description">
+                        Improve lateral trunk control and shoulder girdle mobility. Practice controlled leaning movements while maintaining core stability and balance.
+                    </p>
+                    <ul class="exercise-features">
+                        <li>Lateral trunk control</li>
+                        <li>Shoulder girdle mobility</li>
+                        <li>Core stability training</li>
+                        <li>Dynamic balance work</li>
+                    </ul>
+                    <button class="start-button" onclick="openExercise('shoulder.html')">Start Game</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="coming-soon-section">
+                <div class="badge">Coming Soon</div>
+                <h2 class="section-title" style="margin-bottom: 20px; color: white;">🚀 Additional Exercise Categories</h2>
+                <p style="color: rgba(255, 255, 255, 0.9); font-size: 1.1rem; margin-bottom: 30px;">
+                    We're expanding our platform with specialized exercise categories targeting different body regions and therapeutic goals.
+                </p>
+                
+                <div class="coming-soon-grid">
+                    <div class="coming-soon-card">
+                        <h3>🦵 Lower Extremity</h3>
+                        <p>Leg strength, gait training, balance exercises, and ankle mobility protocols.</p>
+                    </div>
+                    
+                    <div class="coming-soon-card">
+                        <h3>🧘‍♀️ Flexibility & Mobility</h3>
+                        <p>Range of motion assessments, stretching routines, and joint mobility exercises.</p>
+                    </div>
+                    
+                    <div class="coming-soon-card">
+                        <h3>⚖️ Balance & Coordination</h3>
+                        <p>Proprioception training, stability challenges, and fall prevention programs.</p>
+                    </div>
+                    
+                    <div class="coming-soon-card">
+                        <h3>🧠 Neurological Rehabilitation</h3>
+                        <p>Cognitive-motor tasks, reaction time training, and neuroplasticity exercises.</p>
+                    </div>
+                    
+                    <div class="coming-soon-card">
+                        <h3>🏃‍♂️ Cardiopulmonary</h3>
+                        <p>Breathing exercises, endurance training, and cardiovascular conditioning.</p>
+                    </div>
+                    
+                    <div class="coming-soon-card">
+                        <h3>📊 Assessment Tools</h3>
+                        <p>Comprehensive movement analysis, progress tracking, and outcome measurements.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        function openExercise(filename) {
+            // You can modify this function to handle how exercises are opened
+            // For now, it will try to open the file in a new tab
+            window.open(filename, '_blank');
+        }
+
+        // Add some interactive animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.exercise-card');
+            
+            cards.forEach((card, index) => {
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(50px)';
+                
+                setTimeout(() => {
+                    card.style.transition = 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateY(0)';
+                }, index * 150);
+            });
+        });
+    </script>
+</body>
+</html>

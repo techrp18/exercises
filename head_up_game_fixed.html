@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Head Rise - Upward Motion Game v2</title>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; overflow:hidden; background:#000; }
+
+  #video {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh; object-fit:cover;
+    transform: scaleX(-1); /* mirror */
+    z-index:0;
+  }
+  
+  #gameCanvas {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh;
+    z-index: 10;
+  }
+
+  #ui {
+    position:absolute; left:20px; top:20px; z-index:20;
+    background: rgba(0,0,0,0.72); color:#fff; padding:14px; border-radius:12px;
+    min-width:260px; font-size:15px;
+  }
+  #controls {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:18px; z-index:20; display:flex; gap:10px;
+  }
+  button {
+    background: linear-gradient(45deg,#2bcbba,#0fb9b1); color:#fff; border:0; padding:10px 16px; border-radius:20px;
+    cursor:pointer; font-weight:700; box-shadow:0 6px 18px rgba(0,0,0,0.18);
+  }
+  button:hover { transform: translateY(-3px); }
+  button.recording { background: linear-gradient(45deg,#ff6b6b,#ee5a52); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 4px 12px rgba(255,107,107,0.25);}50%{box-shadow:0 6px 20px rgba(255,107,107,0.45);}100%{box-shadow:0 4px 12px rgba(255,107,107,0.25);} }
+
+  #status {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:20;
+    color:#fff; text-align:center; background: rgba(0,0,0,0.6); padding:18px; border-radius:12px; max-width:640px;
+  }
+
+  .point-popup {
+    position:absolute; z-index:30;
+    color: #45b7d1; /* Default color for positive points */
+    font-weight:800; font-size: 24px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+    animation: fadeUpAndOut 1.5s ease-out forwards;
+  }
+  .point-popup.negative {
+    color: #ff6b6b; /* Red color for negative points */
+  }
+
+  @keyframes fadeUpAndOut {
+    from { transform: translateY(0) scale(1); opacity: 1; }
+    to { transform: translateY(-80px) scale(1.5); opacity: 0; }
+  }
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="ui">
+    <div><strong>🎯 Score:</strong> <span id="score">0</span></div>
+    <div><strong>🏆 High Score:</strong> <span id="highScore">0</span></div>
+    <div><strong>🙂 Head Status:</strong> <span id="headStatus">Not Detected</span></div>
+    <div style="margin-top:8px;"><strong>📊 CSV Recording:</strong> <span id="csvStatus">Stopped</span></div>
+    <div style="margin-top:8px;"><strong>📹 Video Recording:</strong> <span id="videoStatus">Stopped</span></div>
+  </div>
+
+  <div id="controls">
+    <button id="startBtn" onclick="game.startGame()">🎮 Start Game</button>
+    <button id="recordCsvBtn" onclick="game.toggleCsvRecording()">📈 Record CSV</button>
+    <button id="recordVideoBtn" onclick="game.toggleVideoRecording()">📹 Record Video</button>
+    <button id="downloadBtn" onclick="game.downloadCsvData()">💾 Download CSV</button>
+  </div>
+
+  <div id="status">
+    <h2>🙂 Head Rise Game</h2>
+    <p>Move your head UP to score points. Moving your head DOWN will result in a penalty!.</p>
+  </div>
+
+<script>
+class HeadRiseGame {
+  constructor() {
+    this.video = document.getElementById('video');
+    this.canvas = document.getElementById('gameCanvas');
+    this.ctx = this.canvas.getContext('2d');
+
+    this.gameStarted = false;
+    this.score = 0;
+    this.highScore = localStorage.getItem('headRiseHighScore') || 0;
+    document.getElementById('highScore').textContent = this.highScore;
+    
+    // Head tracking state
+    this.headPos = { x: 0, y: 0, detected: false };
+    this.prevHeadY = null;
+    this.velocityY = 0;
+    this.isMovingUp = false;
+    this.isMovingDown = false;
+    this.startMoveY = null;
+    this.startDownwardMoveY = null;
+
+    // Recording
+    this.isCsvRecording = false;
+    this.motionData = [];
+    this.isVideoRecording = false;
+    this.mediaRecorder = null;
+    this.recordedChunks = [];
+    
+    window.addEventListener('resize', this.resizeCanvas.bind(this));
+  }
+
+  resizeCanvas() {
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+  }
+
+  async startGame() {
+    try {
+      document.getElementById('status').style.display = 'none';
+      this.resizeCanvas();
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+      this.video.srcObject = stream;
+      await new Promise(resolve => { this.video.onloadeddata = () => resolve(); });
+
+      const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+      faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      faceMesh.onResults(this.onFaceResults.bind(this));
+
+      const camera = new Camera(this.video, {
+        onFrame: async () => {
+          await faceMesh.send({image: this.video});
+        },
+        width: 1280,
+        height: 720
+      });
+      camera.start();
+
+      this.gameStarted = true;
+      this.gameLoop();
+      document.getElementById('startBtn').textContent = '✅ Camera Active';
+      document.getElementById('startBtn').disabled = true;
+
+    } catch (err) {
+      console.error('startGame error', err);
+      alert('Could not start camera — please allow permissions and try again.');
+    }
+  }
+
+  getHeadPosition(landmarks) {
+      const keyPoints = [1, 6, 152];
+      let avgX = 0, avgY = 0;
+      for(const idx of keyPoints) {
+          avgX += landmarks[idx].x;
+          avgY += landmarks[idx].y;
+      }
+      return { x: avgX / keyPoints.length, y: avgY / keyPoints.length };
+  }
+
+  onFaceResults(results) {
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+      document.getElementById('headStatus').textContent = 'Detected';
+      const landmarks = results.multiFaceLandmarks[0];
+      const normPos = this.getHeadPosition(landmarks);
+
+      const rect = this.video.getBoundingClientRect();
+      const mirroredX = 1 - normPos.x;
+      this.headPos = {
+          x: rect.left + mirroredX * rect.width,
+          y: rect.top + normPos.y * rect.height,
+          detected: true
+      };
+      
+      this.updateMovement();
+      if(this.isCsvRecording) this.recordCsvData();
+
+    } else {
+      document.getElementById('headStatus').textContent = 'Not Detected';
+      this.headPos.detected = false;
+      this.prevHeadY = null;
+    }
+  }
+
+  updateMovement() {
+    if (this.prevHeadY === null) {
+        this.prevHeadY = this.headPos.y;
+        return;
+    }
+
+    this.velocityY = this.prevHeadY - this.headPos.y; // positive is up, negative is down
+
+    // DETECTING UPWARD MOVEMENT
+    if (this.velocityY > 1.5) { // Threshold for moving up
+        if (!this.isMovingUp) {
+            this.isMovingUp = true;
+            this.startMoveY = this.headPos.y;
+        }
+        if (this.isMovingDown) {
+            // Downward movement has ended, calculate penalty
+            const distance = this.headPos.y - this.startDownwardMoveY;
+            if (distance > 20) { // minimum distance
+                const points = -Math.round(distance / 2); // Penalize at half rate
+                this.addScore(points);
+            }
+            this.isMovingDown = false;
+        }
+    }
+    // DETECTING DOWNWARD MOVEMENT
+    else if (this.velocityY < -1.5) { // Threshold for moving down
+        if (!this.isMovingDown) {
+            this.isMovingDown = true;
+            this.startDownwardMoveY = this.headPos.y;
+        }
+        if (this.isMovingUp) {
+            // Upward movement has ended, calculate score
+            const distance = this.startMoveY - this.headPos.y;
+            if (distance > 20) {
+                const points = Math.round(distance);
+                this.addScore(points);
+            }
+            this.isMovingUp = false;
+        }
+    }
+
+    this.prevHeadY = this.headPos.y;
+  }
+
+  addScore(points) {
+      this.score += points;
+      this.score = Math.max(0, this.score); // Ensure score never goes below zero
+      this.showPointsPopup(points);
+      this.updateUI();
+
+      if (this.score > this.highScore) {
+          this.highScore = this.score;
+          localStorage.setItem('headRiseHighScore', this.highScore);
+      }
+  }
+  
+  showPointsPopup(points) {
+    const popup = document.createElement('div');
+    popup.className = 'point-popup';
+    
+    if (points > 0) {
+        popup.textContent = `+${points}`;
+    } else {
+        popup.textContent = `${points}`; // points is already negative
+        popup.classList.add('negative');
+    }
+
+    popup.style.left = `${this.headPos.x}px`;
+    popup.style.top = `${this.headPos.y}px`;
+    document.body.appendChild(popup);
+    setTimeout(() => popup.remove(), 1400);
+  }
+
+  updateUI() {
+    document.getElementById('score').textContent = this.score;
+    document.getElementById('highScore').textContent = this.highScore;
+  }
+
+  draw() {
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      if (this.headPos.detected) {
+          // Horizontal line length will be dynamic, growing with vertical velocity.
+          const lineLength = 150 + Math.min(Math.abs(this.velocityY) * 15, 75);
+
+          // Set line styles - make it thinner
+          this.ctx.lineWidth = 8; // Reduced for a thinner look
+          this.ctx.lineCap = 'round';
+
+          // Set color based on direction
+          this.ctx.strokeStyle = this.velocityY > 0 
+            ? `rgba(70, 183, 209, 0.85)` // Blue for up
+            : `rgba(255, 107, 107, 0.85)`; // Red for down
+
+          // Draw the horizontal line centered on the head position
+          this.ctx.beginPath();
+          this.ctx.moveTo(this.headPos.x - lineLength / 2, this.headPos.y);
+          this.ctx.lineTo(this.headPos.x + lineLength / 2, this.headPos.y);
+          this.ctx.stroke();
+      }
+  }
+
+  gameLoop() {
+    if (!this.gameStarted) return;
+    this.draw();
+    requestAnimationFrame(this.gameLoop.bind(this));
+  }
+  
+  // --- RECORDING ---
+  
+  toggleCsvRecording() {
+    if (!this.gameStarted) { alert('Start the game first!'); return; }
+    const btn = document.getElementById('recordCsvBtn');
+    if (!this.isCsvRecording) {
+        this.isCsvRecording = true;
+        this.motionData = [['Timestamp', 'HeadY', 'VelocityY', 'Score']];
+        btn.textContent = '⏹️ Stop CSV';
+        btn.classList.add('recording');
+        document.getElementById('csvStatus').textContent = '🔴 Recording';
+    } else {
+        this.isCsvRecording = false;
+        btn.textContent = '📈 Record CSV';
+        btn.classList.remove('recording');
+        document.getElementById('csvStatus').textContent = '⚫ Stopped';
+    }
+  }
+
+  recordCsvData() {
+    this.motionData.push([
+        Date.now(),
+        this.headPos.y.toFixed(2),
+        this.velocityY.toFixed(2),
+        this.score
+    ]);
+  }
+
+  downloadCsvData() {
+    if (this.motionData.length <= 1) {
+        alert('No data recorded to download.');
+        return;
+    }
+    const csvContent = "data:text/csv;charset=utf-8," 
+        + this.motionData.map(e => e.join(",")).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    const fileName = `head_rise_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  toggleVideoRecording() {
+      if (!this.gameStarted) { alert('Start the game first!'); return; }
+      const btn = document.getElementById('recordVideoBtn');
+      if (!this.isVideoRecording) {
+          this.startVideoRecording();
+          btn.textContent = '⏹️ Stop Video';
+          btn.classList.add('recording');
+          document.getElementById('videoStatus').textContent = '🔴 Recording';
+      } else {
+          this.stopVideoRecording();
+          btn.textContent = '📹 Record Video';
+          btn.classList.remove('recording');
+          document.getElementById('videoStatus').textContent = '⚫ Stopped';
+      }
+  }
+
+  startVideoRecording() {
+    const canvasStream = this.canvas.captureStream();
+    const videoStream = this.video.srcObject;
+    const combinedStream = new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...canvasStream.getVideoTracks(),
+    ]);
+
+    this.recordedChunks = [];
+    this.mediaRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm; codecs=vp9' });
+
+    this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+            this.recordedChunks.push(event.data);
+        }
+    };
+    
+    this.mediaRecorder.onstop = () => {
+        const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const fileName = `head_rise_recording_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    };
+
+    this.mediaRecorder.start();
+    this.isVideoRecording = true;
+  }
+
+  stopVideoRecording() {
+      if (this.mediaRecorder) {
+          this.mediaRecorder.stop();
+          this.isVideoRecording = false;
+      }
+  }
+}
+
+const game = new HeadRiseGame();
+</script>
+</body>
+</html>
