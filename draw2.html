@@ -71,7 +71,11 @@
     <canvas id="drawingCanvas"></canvas>
   </div>
 
+  <audio id="backgroundMusic" src="musicbg.mp3" loop preload="auto"></audio>
+
   <div id="instructions" class="instructions"></div>
+
+  
 
   <div class="controls">
     <button id="clearBtn" class="control-btn clear-btn">🗑️ Clear All</button>
@@ -113,6 +117,7 @@
       this.loading = document.getElementById('loading');
       this.status = document.getElementById('status');
       this.instructions = document.getElementById('instructions');
+      this.backgroundMusic = document.getElementById('backgroundMusic');
 
       // Controls
       this.clearBtn = document.getElementById('clearBtn');
@@ -184,6 +189,11 @@
         this.resizeCanvas();
         this.loading.style.display = 'none';
         this.setStatus('Camera started successfully.');
+        
+        if (this.backgroundMusic) {
+            this.backgroundMusic.play().catch(e => console.warn("Background music failed to play:", e));
+        }
+
       } catch (err) {
         this.loading.innerHTML = `<h3 style="color:red">Camera Error</h3><p>${err.message}</p>`;
         this.setStatus('Camera permission denied.');

@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>🥷 Fruit Ninja Hand Tracking Game</title>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { 
+    font-family: 'Arial Black', Arial, sans-serif; 
+    overflow:hidden; 
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+    color:#fff; 
+    cursor: none;
+  }
+
+  /* Full-screen camera */
+  #video {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh; object-fit:cover;
+    transform: scaleX(-1); /* mirror */
+    z-index:0;
+    opacity: 0.8;
+  }
+
+  /* Game overlay */
+  #gameOverlay {
+    position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: radial-gradient(circle at center, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.3) 100%);
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* UI Panel */
+  #ui {
+    position:absolute; left:20px; top:20px; z-index:20;
+    background: linear-gradient(145deg, rgba(0,0,0,0.8), rgba(40,40,40,0.9));
+    color:#fff; padding:20px; border-radius:15px;
+    min-width:280px; font-size:16px; font-weight: bold;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    border: 2px solid rgba(255,255,255,0.1);
+  }
+
+  .ui-row {
+    display: flex; justify-content: space-between;
+    margin-bottom: 8px; align-items: center;
+  }
+
+  .ui-label { color: #ffd700; }
+  .ui-value { 
+    color: #00ff88; 
+    font-size: 18px; 
+    text-shadow: 0 0 10px rgba(0,255,136,0.5);
+  }
+
+  /* Controls */
+  #controls {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:25px; z-index:20; 
+    display:flex; gap:15px; flex-wrap: wrap; justify-content: center;
+  }
+  
+  button {
+    background: linear-gradient(45deg,#ff6b6b,#ee5a52); 
+    color:#fff; border:0; padding:12px 20px; border-radius:25px;
+    cursor:pointer; font-weight:700; font-size: 14px;
+    box-shadow:0 8px 20px rgba(238,90,82,0.4);
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+  }
+  
+  button:hover { 
+    transform: translateY(-3px); 
+    box-shadow:0 12px 25px rgba(238,90,82,0.6);
+  }
+  
+  button.active { 
+    background: linear-gradient(45deg,#00d2ff,#3a7bd5); 
+    box-shadow:0 8px 20px rgba(58,123,213,0.4);
+  }
+
+  /* Status screen */
+  #status {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:20;
+    color:#fff; text-align:center; 
+    background: linear-gradient(145deg, rgba(0,0,0,0.9), rgba(40,40,40,0.95)); 
+    padding:40px; border-radius:20px; max-width:600px;
+    border: 3px solid #ffd700;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+  }
+
+  #status h2 {
+    font-size: 2.5em;
+    margin-bottom: 20px;
+    background: linear-gradient(45deg, #ffd700, #ffed4e);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Hand cursors - ninja sword style */
+  .hand-cursor {
+    position: absolute; 
+    width: 120px; 
+    height: 8px; 
+    pointer-events: none; 
+    z-index: 25; 
+    transform: translate(-50%, -50%); 
+    transition: all 0.08s linear;
+    border-radius: 4px;
+    overflow: visible;
+  }
+  
+  .left-hand { 
+    background: linear-gradient(90deg, 
+      transparent 0%, 
+      rgba(255,71,87,0.3) 10%, 
+      rgba(255,71,87,0.9) 40%, 
+      #ff4757 60%, 
+      #ff3742 80%, 
+      #ff1744 100%
+    );
+    box-shadow: 
+      0 0 20px rgba(255,71,87,0.8),
+      0 0 40px rgba(255,71,87,0.4),
+      inset 0 0 10px rgba(255,255,255,0.3);
+    border: 1px solid rgba(255,71,87,0.6);
+  }
+  
+  .right-hand { 
+    background: linear-gradient(90deg, 
+      transparent 0%, 
+      rgba(55,66,250,0.3) 10%, 
+      rgba(55,66,250,0.9) 40%, 
+      #3742fa 60%, 
+      #2f3542 80%, 
+      #1e40af 100%
+    );
+    box-shadow: 
+      0 0 20px rgba(55,66,250,0.8),
+      0 0 40px rgba(55,66,250,0.4),
+      inset 0 0 10px rgba(255,255,255,0.3);
+    border: 1px solid rgba(55,66,250,0.6);
+  }
+  
+  /* Sword core (bright center line) */
+  .hand-cursor::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 20%;
+    right: 0;
+    height: 2px;
+    background: #fff;
+    transform: translateY(-50%);
+    box-shadow: 0 0 8px #fff;
+    border-radius: 1px;
+  }
+  
+  /* Sword tip glow */
+  .hand-cursor::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: -5px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    transform: translateY(-50%);
+    box-shadow: 0 0 15px currentColor;
+  }
+  
+  .left-hand::after {
+    background: radial-gradient(circle, #ff4757, transparent);
+  }
+  
+  .right-hand::after {
+    background: radial-gradient(circle, #3742fa, transparent);
+  }
+  
+  .hand-cursor.slicing { 
+    transform: translate(-50%, -50%) scale(1.5, 2); 
+    filter: brightness(1.5) saturate(1.3);
+  }
+  
+  .hand-cursor.slicing::before {
+    box-shadow: 0 0 15px #fff, 0 0 25px currentColor;
+  }
+  
+  .hand-cursor.slicing::after {
+    box-shadow: 0 0 25px currentColor, 0 0 35px currentColor;
+  }
+
+  /* Slash trail effect */
+  .slash-trail {
+    position: absolute;
+    height: 4px;
+    background: linear-gradient(90deg, transparent, #fff, transparent);
+    border-radius: 2px;
+    z-index: 24;
+    pointer-events: none;
+    box-shadow: 0 0 10px #fff;
+    animation: slashFade 0.3s ease-out forwards;
+  }
+
+  @keyframes slashFade {
+    0% { opacity: 1; width: 0; }
+    50% { opacity: 1; }
+    100% { opacity: 0; width: 100px; }
+  }
+
+  /* Fruits */
+  .fruit {
+    position:absolute; border-radius:50%; 
+    display:flex; align-items:center; justify-content:center; 
+    color:#fff; font-weight:800; font-size: 1.2em;
+    text-shadow:2px 2px 4px rgba(0,0,0,0.8); z-index:15; 
+    transition: all 0.2s cubic-bezier(.2,.8,.2,1);
+    cursor: none;
+    filter: drop-shadow(0 5px 15px rgba(0,0,0,0.3));
+    border: 3px solid rgba(255,255,255,0.3);
+  }
+
+  .fruit.spawning { 
+    animation: fruitSpawn 0.6s ease-out; 
+  }
+
+  @keyframes fruitSpawn {
+    0% { transform: scale(0) rotate(-180deg); opacity:0; }
+    70% { transform: scale(1.1) rotate(0deg); opacity:0.9; }
+    100% { transform: scale(1) rotate(0deg); opacity:1; }
+  }
+
+  .fruit.sliced { 
+    animation: fruitSliced 0.8s ease-out forwards; 
+  }
+
+  @keyframes fruitSliced {
+    0% { transform: scale(1) rotate(0deg); opacity:1; }
+    50% { transform: scale(1.2) rotate(180deg); opacity:0.8; }
+    100% { transform: scale(0.3) rotate(360deg); opacity:0; }
+  }
+
+  /* Fruit halves for realistic slicing */
+  .fruit-half {
+    position: absolute;
+    border-radius: 50%;
+    z-index: 16;
+    pointer-events: none;
+    filter: drop-shadow(0 3px 10px rgba(0,0,0,0.4));
+  }
+
+  .fruit-half.left {
+    clip-path: polygon(0 0, 50% 0, 50% 100%, 0 100%);
+    animation: fruitHalfLeft 1s ease-out forwards;
+  }
+
+  .fruit-half.right {
+    clip-path: polygon(50% 0, 100% 0, 100% 100%, 50% 100%);
+    animation: fruitHalfRight 1s ease-out forwards;
+  }
+
+  @keyframes fruitHalfLeft {
+    0% { transform: translateX(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateX(-150px) translateY(200px) rotate(-180deg); opacity: 0; }
+  }
+
+  @keyframes fruitHalfRight {
+    0% { transform: translateX(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateX(150px) translateY(200px) rotate(180deg); opacity: 0; }
+  }
+
+  /* Juice splash particles */
+  .juice-particle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 17;
+    pointer-events: none;
+    animation: juiceSplash 1.2s ease-out forwards;
+  }
+
+  @keyframes juiceSplash {
+    0% { 
+      transform: scale(1); 
+      opacity: 1; 
+    }
+    100% { 
+      transform: scale(0) translateX(var(--dx, 0)) translateY(var(--dy, 0)); 
+      opacity: 0; 
+    }
+  }
+
+  /* Success messages */
+  .success-message {
+    position:absolute; left:50%; top:30%; transform:translate(-50%,-50%); z-index:30;
+    background: linear-gradient(145deg, #2ed573, #1dd1a1);
+    color:#fff; padding: 25px 45px; border-radius: 20px; 
+    font-weight: 700; font-size: 2em; text-align: center;
+    animation: successPop 2.5s ease-in-out forwards;
+    box-shadow: 0 10px 30px rgba(46,213,115,0.4);
+    border: 2px solid rgba(255,255,255,0.3);
+  }
+
+  @keyframes successPop {
+    0% { transform:translate(-50%,-50%) scale(0) rotate(-15deg); opacity:0; }
+    15% { transform:translate(-50%,-50%) scale(1.2) rotate(5deg); opacity:1; }
+    85% { transform:translate(-50%,-50%) scale(1.05) rotate(-2deg); opacity:1; }
+    100% { transform:translate(-50%,-50%) scale(1) rotate(0deg); opacity:0; }
+  }
+
+  /* Combo multiplier */
+  .combo-display {
+    position: absolute;
+    right: 30px;
+    top: 30px;
+    background: linear-gradient(145deg, #ff6b6b, #ee5a52);
+    padding: 15px 25px;
+    border-radius: 15px;
+    font-weight: bold;
+    font-size: 1.5em;
+    z-index: 20;
+    border: 2px solid rgba(255,255,255,0.3);
+    box-shadow: 0 8px 20px rgba(255,107,107,0.4);
+    animation: comboGlow 0.5s ease-in-out;
+  }
+
+  @keyframes comboGlow {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); box-shadow: 0 8px 30px rgba(255,107,107,0.8); }
+    100% { transform: scale(1); }
+  }
+
+  /* Fireworks effect */
+  .firework {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    background: #ffd700;
+    border-radius: 50%;
+    z-index: 28;
+    animation: fireworkExplode 2s ease-out forwards;
+  }
+
+  @keyframes fireworkExplode {
+    0% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(3);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(0) translateX(var(--fx, 0)) translateY(var(--fy, 0));
+      opacity: 0;
+    }
+  }
+
+  /* Game over screen */
+  .game-over {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0,0,0,0.9);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    color: #fff;
+    text-align: center;
+  }
+
+  .game-over h1 {
+    font-size: 4em;
+    margin-bottom: 20px;
+    color: #ff6b6b;
+    text-shadow: 0 0 20px rgba(255,107,107,0.5);
+  }
+
+  .game-over .final-stats {
+    background: rgba(255,255,255,0.1);
+    padding: 30px;
+    border-radius: 15px;
+    margin: 20px 0;
+  }
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <div id="gameOverlay"></div>
+
+  <!-- Audio Elements -->
+  <audio id="backgroundMusic" loop preload="auto">
+    <source src="musicbg.mp3" type="audio/mpeg">
+    <source src="background-music.wav" type="audio/wav">
+    <!-- Add your background music file here -->
+  </audio>
+  
+  <audio id="sliceSound1" preload="auto">
+    <source src="audio.mp3" type="audio/mpeg">
+    <source src="slice-sound-1.wav" type="audio/wav">
+    <!-- Add your slice sound file here -->
+  </audio>
+  
+  <audio id="sliceSound2" preload="auto">
+    <source src="audio.mp3" type="audio/mpeg">
+    <source src="slice-sound-2.wav" type="audio/wav">
+    <!-- Alternative slice sound for variation -->
+  </audio>
+  
+  <audio id="sliceSound3" preload="auto">
+    <source src="audio.mp3" type="audio/mpeg">
+    <source src="slice-sound-3.wav" type="audio/wav">
+    <!-- Another slice sound for variation -->
+  </audio>
+  
+  <audio id="comboSound" preload="auto">
+    <source src="combo-sound.mp3" type="audio/mpeg">
+    <source src="combo-sound.wav" type="audio/wav">
+    <!-- Combo sound effect -->
+  </audio>
+  
+  <audio id="levelUpSound" preload="auto">
+    <source src="levelup-sound.mp3" type="audio/mpeg">
+    <source src="levelup-sound.wav" type="audio/wav">
+    <!-- Level up sound effect -->
+  </audio>
+  
+  <audio id="gameStartSound" preload="auto">
+    <source src="gamestart-sound.mp3" type="audio/mpeg">
+    <source src="gamestart-sound.wav" type="audio/wav">
+    <!-- Game start sound effect -->
+  </audio>
+
+  <div id="ui">
+    <div class="ui-row">
+      <span class="ui-label">🍎 Score:</span>
+      <span class="ui-value" id="score">0</span>
+    </div>
+    <div class="ui-row">
+      <span class="ui-label">🥷 Level:</span>
+      <span class="ui-value" id="level">1</span>
+    </div>
+    <div class="ui-row">
+      <span class="ui-label">🔥 Combo:</span>
+      <span class="ui-value" id="combo">0</span>
+    </div>
+    <div class="ui-row">
+      <span class="ui-label">🍉 Sliced:</span>
+      <span class="ui-value" id="sliced">0</span>
+    </div>
+    <div class="ui-row">
+      <span class="ui-label">🏆 High Score:</span>
+      <span class="ui-value" id="highScore">0</span>
+    </div>
+    <div class="ui-row">
+      <span class="ui-label">👐 Hands:</span>
+      <span class="ui-value" id="handStatus">Not Detected</span>
+    </div>
+    <div class="ui-row">
+      <span class="ui-label">🔊 Audio:</span>
+      <span class="ui-value" id="audioStatus">Enabled</span>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="startBtn" onclick="startGame()">🥷 Start Ninja Game</button>
+    <button id="pauseBtn" onclick="togglePause()" style="display:none;">⏸️ Pause</button>
+    <button id="audioBtn" onclick="toggleAudio()">🔊 Audio On</button>
+    <button id="resetBtn" onclick="resetGame()">🔄 Reset Game</button>
+  </div>
+
+  <div id="status">
+    <h2>🥷 Functional hand movement</h2>
+    <p>Click "Start Ninja Game" and allow camera access.</p>
+    <p>Use both hands to slice fruits as they fly across the screen!</p>
+    <p>Build combos for higher scores! 🔥</p>
+  </div>
+
+<script>
+class FruitNinjaGame {
+  constructor() {
+    this.video = document.getElementById('video');
+    
+    // Audio elements
+    this.backgroundMusic = document.getElementById('backgroundMusic');
+    this.sliceSounds = [
+      document.getElementById('sliceSound1'),
+      document.getElementById('sliceSound2'),
+      document.getElementById('sliceSound3')
+    ];
+    this.comboSound = document.getElementById('comboSound');
+    this.levelUpSound = document.getElementById('levelUpSound');
+    this.gameStartSound = document.getElementById('gameStartSound');
+    
+    // Audio settings
+    this.audioEnabled = true;
+    this.musicVolume = 0.3; // Background music at 30%
+    this.effectsVolume = 0.7; // Sound effects at 70%
+    
+    // Initialize audio
+    this.initializeAudio();
+    
+    // Game state
+    this.gameStarted = false;
+    this.gamePaused = false;
+    this.gameOver = false;
+    this.score = 0;
+    this.level = 1;
+    this.sliced = 0;
+    this.combo = 0;
+    this.comboTimer = null;
+    this.fruits = [];
+    this.fruitSpawnTimer = null;
+    
+    // Fruit types with emojis and colors
+    this.fruitTypes = [
+      { emoji: '🍎', color: '#ff4757', juice: '#ff6b6b', points: 10, name: 'Apple' },
+      { emoji: '🍊', color: '#ff7675', juice: '#fd79a8', points: 15, name: 'Orange' },
+      { emoji: '🍌', color: '#fdcb6e', juice: '#f1c40f', points: 12, name: 'Banana' },
+      { emoji: '🍇', color: '#6c5ce7', juice: '#a29bfe', points: 18, name: 'Grapes' },
+      { emoji: '🍓', color: '#e84393', juice: '#fd79a8', points: 20, name: 'Strawberry' },
+      { emoji: '🍑', color: '#e17055', juice: '#fab1a0', points: 25, name: 'Cherry' },
+      { emoji: '🥝', color: '#00b894', juice: '#55a3ff', points: 22, name: 'Kiwi' },
+      { emoji: '🍉', color: '#00b894', juice: '#ff6b6b', points: 30, name: 'Watermelon' }
+    ];
+    
+    // Hand tracking
+    this.hands = null;
+    this.cameraHelper = null;
+    this.currentHands = {};
+    this.prevHandPositions = {};
+    this.handTrails = {};
+    
+    // High score
+    this.highScore = parseInt(localStorage.getItem("fruitNinjaHighScore")) || 0;
+    
+    // Create hand cursors
+    this.createCursor('Left');
+    this.createCursor('Right');
+    
+    this.updateUI();
+  }
+
+  initializeAudio() {
+    // Set volumes
+    this.backgroundMusic.volume = this.musicVolume;
+    this.sliceSounds.forEach(sound => {
+      if (sound) sound.volume = this.effectsVolume;
+    });
+    if (this.comboSound) this.comboSound.volume = this.effectsVolume;
+    if (this.levelUpSound) this.levelUpSound.volume = this.effectsVolume;
+    if (this.gameStartSound) this.gameStartSound.volume = this.effectsVolume;
+
+    // Handle audio loading errors gracefully
+    [this.backgroundMusic, ...this.sliceSounds, this.comboSound, this.levelUpSound, this.gameStartSound].forEach(audio => {
+      if (audio) {
+        audio.addEventListener('error', (e) => {
+          console.warn('Audio file failed to load:', e.target.src);
+        });
+      }
+    });
+  }
+
+  playSliceSound() {
+    if (!this.audioEnabled) return;
+    
+    // Play random slice sound for variation
+    const availableSounds = this.sliceSounds.filter(sound => 
+      sound && sound.readyState >= 2 && !sound.error
+    );
+    
+    if (availableSounds.length > 0) {
+      const randomSound = availableSounds[Math.floor(Math.random() * availableSounds.length)];
+      randomSound.currentTime = 0; // Reset to start
+      randomSound.play().catch(e => console.warn('Slice sound failed to play:', e));
+    }
+  }
+
+  playComboSound() {
+    if (!this.audioEnabled || !this.comboSound) return;
+    
+    try {
+      this.comboSound.currentTime = 0;
+      this.comboSound.play().catch(e => console.warn('Combo sound failed to play:', e));
+    } catch (e) {
+      console.warn('Combo sound error:', e);
+    }
+  }
+
+  playLevelUpSound() {
+    if (!this.audioEnabled || !this.levelUpSound) return;
+    
+    try {
+      this.levelUpSound.currentTime = 0;
+      this.levelUpSound.play().catch(e => console.warn('Level up sound failed to play:', e));
+    } catch (e) {
+      console.warn('Level up sound error:', e);
+    }
+  }
+
+  playGameStartSound() {
+    if (!this.audioEnabled || !this.gameStartSound) return;
+    
+    try {
+      this.gameStartSound.currentTime = 0;
+      this.gameStartSound.play().catch(e => console.warn('Game start sound failed to play:', e));
+    } catch (e) {
+      console.warn('Game start sound error:', e);
+    }
+  }
+
+  startBackgroundMusic() {
+    if (!this.audioEnabled || !this.backgroundMusic) return;
+    
+    try {
+      this.backgroundMusic.currentTime = 0;
+      this.backgroundMusic.play().catch(e => console.warn('Background music failed to play:', e));
+    } catch (e) {
+      console.warn('Background music error:', e);
+    }
+  }
+
+  stopBackgroundMusic() {
+    if (this.backgroundMusic) {
+      this.backgroundMusic.pause();
+    }
+  }
+
+  toggleAudio() {
+    this.audioEnabled = !this.audioEnabled;
+    const btn = document.getElementById('audioBtn');
+    
+    if (this.audioEnabled) {
+      btn.textContent = '🔊 Audio On';
+      btn.classList.remove('active');
+      if (this.gameStarted && !this.gamePaused) {
+        this.startBackgroundMusic();
+      }
+    } else {
+      btn.textContent = '🔇 Audio Off';
+      btn.classList.add('active');
+      this.stopBackgroundMusic();
+    }
+    
+    document.getElementById('audioStatus').textContent = this.audioEnabled ? 'Enabled' : 'Disabled';
+  }
+
+  createCursor(type) {
+    const cursor = document.createElement('div');
+    cursor.className = 'hand-cursor ' + (type === 'Left' ? 'left-hand' : 'right-hand');
+    cursor.style.display = 'none';
+    document.body.appendChild(cursor);
+    this.cursors = this.cursors || {};
+    this.cursors[type] = cursor;
+  }
+
+  async startGame() {
+    try {
+      document.getElementById('status').style.display = 'none';
+      
+      // Play game start sound
+      this.playGameStartSound();
+      
+      // Start camera
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 1280, height: 720, facingMode: 'user' }, 
+        audio: false 
+      });
+      this.video.srcObject = stream;
+      await new Promise(resolve => { this.video.onloadeddata = resolve; });
+      
+      // Initialize MediaPipe
+      this.hands = new Hands({ 
+        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` 
+      });
+      this.hands.setOptions({ 
+        maxNumHands: 2, 
+        modelComplexity: 1, 
+        minDetectionConfidence: 0.8, 
+        minTrackingConfidence: 0.7 
+      });
+      this.hands.onResults(results => this.onHandResults(results));
+      
+      this.cameraHelper = new Camera(this.video, {
+        onFrame: async () => { 
+          if (!this.gamePaused) {
+            await this.hands.send({ image: this.video }); 
+          }
+        },
+        width: 1280, 
+        height: 720
+      });
+      this.cameraHelper.start();
+      
+      this.gameStarted = true;
+      this.startFruitSpawning();
+      this.gameLoop();
+      
+      // Start background music
+      setTimeout(() => {
+        this.startBackgroundMusic();
+      }, 1000); // Small delay to let game start sound finish
+      
+      document.getElementById('startBtn').textContent = '✅ Game Active';
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('pauseBtn').style.display = 'inline-block';
+      
+    } catch (err) {
+      console.error('Failed to start game:', err);
+      alert('Could not start camera. Please allow camera permissions and try again.');
+    }
+  }
+
+  normalizedToScreenCoords(normX, normY) {
+    const rect = this.video.getBoundingClientRect();
+    const mirroredX = 1 - normX;
+    const x = rect.left + mirroredX * rect.width;
+    const y = rect.top + normY * rect.height;
+    return { x, y };
+  }
+
+  landmarkAverage(landmarks) {
+    // Average key points for hand center
+    const keyPoints = [0, 5, 9, 13, 17];
+    let avgX = 0, avgY = 0;
+    keyPoints.forEach(idx => {
+      avgX += landmarks[idx].x;
+      avgY += landmarks[idx].y;
+    });
+    return { x: avgX / keyPoints.length, y: avgY / keyPoints.length };
+  }
+
+  onHandResults(results) {
+    this.currentHands = {};
+    
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0 && results.multiHandedness) {
+      results.multiHandLandmarks.forEach((landmarks, idx) => {
+        const handType = results.multiHandedness[idx].label;
+        const center = this.landmarkAverage(landmarks);
+        const screenPos = this.normalizedToScreenCoords(center.x, center.y);
+        
+        // Calculate hand orientation for sword angle
+        const wrist = landmarks[0];
+        const middleFinger = landmarks[9];
+        const wristScreen = this.normalizedToScreenCoords(wrist.x, wrist.y);
+        const fingerScreen = this.normalizedToScreenCoords(middleFinger.x, middleFinger.y);
+        
+        const angle = Math.atan2(fingerScreen.y - wristScreen.y, fingerScreen.x - wristScreen.x) * 180 / Math.PI;
+        
+        // Show cursor
+        const cursor = this.cursors[handType];
+        if (cursor) {
+          cursor.style.display = 'block';
+          cursor.style.left = `${screenPos.x}px`;
+          cursor.style.top = `${screenPos.y}px`;
+          cursor.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+        }
+        
+        // Check for slicing motion
+        const prevPos = this.prevHandPositions[handType];
+        if (prevPos) {
+          const speed = Math.sqrt(
+            Math.pow(screenPos.x - prevPos.x, 2) + 
+            Math.pow(screenPos.y - prevPos.y, 2)
+          );
+          
+          if (speed > 15) { // Fast movement = slicing
+            cursor.classList.add('slicing');
+            cursor.style.transform = `translate(-50%, -50%) rotate(${angle}deg) scale(1.5, 2)`;
+            this.createSlashTrail(prevPos, screenPos, handType);
+            this.checkFruitSlicing(prevPos, screenPos, handType);
+          } else {
+            cursor.classList.remove('slicing');
+            cursor.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+          }
+        }
+        
+        this.currentHands[handType] = screenPos;
+        this.prevHandPositions[handType] = screenPos;
+      });
+      
+      // Update hand status
+      const detectedHands = Object.keys(this.currentHands);
+      document.getElementById('handStatus').textContent = 
+        detectedHands.length > 0 ? detectedHands.join(', ') + ' Detected' : 'Not Detected';
+        
+    } else {
+      // No hands detected
+      ['Left', 'Right'].forEach(type => {
+        if (this.cursors[type]) {
+          this.cursors[type].style.display = 'none';
+          this.cursors[type].classList.remove('slicing');
+        }
+      });
+      document.getElementById('handStatus').textContent = 'Not Detected';
+    }
+  }
+
+  createSlashTrail(startPos, endPos, handType) {
+    const trail = document.createElement('div');
+    trail.className = 'slash-trail';
+    
+    const dx = endPos.x - startPos.x;
+    const dy = endPos.y - startPos.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    
+    // Color based on hand
+    const color = handType === 'Left' ? '#ff4757' : '#3742fa';
+    
+    trail.style.left = `${startPos.x}px`;
+    trail.style.top = `${startPos.y}px`;
+    trail.style.width = `${length}px`;
+    trail.style.height = '6px';
+    trail.style.background = `linear-gradient(90deg, transparent, ${color}, transparent)`;
+    trail.style.boxShadow = `0 0 15px ${color}`;
+    trail.style.transform = `rotate(${angle}deg)`;
+    trail.style.transformOrigin = 'left center';
+    trail.style.borderRadius = '3px';
+    
+    document.body.appendChild(trail);
+    setTimeout(() => trail.remove(), 400);
+  }
+
+  startFruitSpawning() {
+    const spawnFruit = () => {
+      if (this.gameStarted && !this.gamePaused && !this.gameOver) {
+        this.spawnRandomFruit();
+        
+        // Increase spawn rate with level
+        const spawnDelay = Math.max(800, 2000 - (this.level * 100));
+        this.fruitSpawnTimer = setTimeout(spawnFruit, spawnDelay);
+      }
+    };
+    spawnFruit();
+  }
+
+  spawnRandomFruit() {
+    const fruitType = this.fruitTypes[Math.floor(Math.random() * this.fruitTypes.length)];
+    const size = 60 + Math.random() * 40; // 60-100px
+    
+    const fruit = document.createElement('div');
+    fruit.className = 'fruit spawning';
+    fruit.style.width = `${size}px`;
+    fruit.style.height = `${size}px`;
+    fruit.style.background = `radial-gradient(circle at 30% 30%, ${fruitType.color}, ${this.darkenColor(fruitType.color, 0.3)})`;
+    fruit.style.fontSize = `${size * 0.6}px`;
+    fruit.textContent = fruitType.emoji;
+    
+    // Random spawn position and trajectory
+    const side = Math.random() < 0.5 ? 'left' : 'right';
+    const startX = side === 'left' ? -size : window.innerWidth;
+    const startY = window.innerHeight - 100 - Math.random() * 200;
+    const endX = side === 'left' ? window.innerWidth + 100 : -100;
+    const endY = 100 + Math.random() * 300;
+    
+    fruit.style.left = `${startX}px`;
+    fruit.style.top = `${startY}px`;
+    
+    // Store fruit data
+    fruit.fruitData = {
+      type: fruitType,
+      startTime: Date.now(),
+      trajectory: { startX, startY, endX, endY },
+      size: size
+    };
+    
+    document.body.appendChild(fruit);
+    this.fruits.push(fruit);
+    
+    // Animate fruit movement
+    this.animateFruit(fruit);
+    
+    // Remove fruit after animation
+    setTimeout(() => {
+      if (fruit.parentNode) {
+        fruit.remove();
+        this.fruits = this.fruits.filter(f => f !== fruit);
+      }
+    }, 4000);
+  }
+
+  animateFruit(fruit) {
+    const data = fruit.fruitData;
+    const duration = 3000 + Math.random() * 1000; // 3-4 seconds
+    const startTime = Date.now();
+    
+    const animate = () => {
+      if (!fruit.parentNode) return;
+      
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // Parabolic trajectory
+      const x = data.trajectory.startX + (data.trajectory.endX - data.trajectory.startX) * progress;
+      const gravity = Math.sin(progress * Math.PI) * 200; // Arc effect
+      const y = data.trajectory.startY + (data.trajectory.endY - data.trajectory.startY) * progress - gravity;
+      
+      // Rotation
+      const rotation = progress * 360 * 2;
+      
+      fruit.style.left = `${x}px`;
+      fruit.style.top = `${y}px`;
+      fruit.style.transform = `rotate(${rotation}deg)`;
+      
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+    
+    animate();
+  }
+
+  checkFruitSlicing(startPos, endPos, handType) {
+    this.fruits.forEach(fruit => {
+      if (fruit.classList.contains('sliced')) return;
+      
+      const fruitRect = fruit.getBoundingClientRect();
+      const fruitCenter = {
+        x: fruitRect.left + fruitRect.width / 2,
+        y: fruitRect.top + fruitRect.height / 2
+      };
+      
+      // Check if slash line intersects with fruit
+      if (this.lineIntersectsCircle(startPos, endPos, fruitCenter, fruitRect.width / 2)) {
+        this.sliceFruit(fruit, handType);
+      }
+    });
+  }
+
+  lineIntersectsCircle(lineStart, lineEnd, circleCenter, radius) {
+    const dx = lineEnd.x - lineStart.x;
+    const dy = lineEnd.y - lineStart.y;
+    const fx = lineStart.x - circleCenter.x;
+    const fy = lineStart.y - circleCenter.y;
+    
+    const a = dx * dx + dy * dy;
+    const b = 2 * (fx * dx + fy * dy);
+    const c = (fx * fx + fy * fy) - radius * radius;
+    
+    const discriminant = b * b - 4 * a * c;
+    
+    if (discriminant < 0) return false;
+    
+    const sqrt = Math.sqrt(discriminant);
+    const t1 = (-b - sqrt) / (2 * a);
+    const t2 = (-b + sqrt) / (2 * a);
+    
+    return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
+  }
+
+  sliceFruit(fruit, handType) {
+    if (fruit.classList.contains('sliced')) return;
+    
+    const fruitData = fruit.fruitData;
+    const points = fruitData.type.points * (this.combo > 0 ? Math.min(this.combo, 5) : 1);
+    
+    this.score += points;
+    this.sliced++;
+    this.combo++;
+    
+    // Play slice sound
+    this.playSliceSound();
+    
+    // Update high score
+    if (this.score > this.highScore) {
+      this.highScore = this.score;
+      localStorage.setItem("fruitNinjaHighScore", this.highScore);
+    }
+    
+    // Level up every 10 fruits
+    if (this.sliced % 10 === 0) {
+      this.level++;
+      this.playLevelUpSound();
+      this.showSuccess(`🔥 Level ${this.level}! Ninja Master!`);
+      this.createFireworks();
+    } else if (this.combo >= 5) {
+      this.playComboSound();
+      this.showSuccess(`🔥 ${this.combo}x COMBO! +${points}pts`);
+    } else {
+      this.showSuccess(`+${points} points!`);
+    }
+    
+    // Show combo display
+    this.showComboDisplay();
+    
+    // Reset combo timer
+    clearTimeout(this.comboTimer);
+    this.comboTimer = setTimeout(() => {
+      this.combo = 0;
+      this.updateUI();
+    }, 2000);
+    
+    // Mark fruit as sliced
+    fruit.classList.add('sliced');
+    
+    // Create slicing effect
+    this.createSlicingEffect(fruit);
+    
+    // Remove from fruits array
+    this.fruits = this.fruits.filter(f => f !== fruit);
+    
+    // Update UI
+    this.updateUI();
+  }
+
+  createSlicingEffect(fruit) {
+    const fruitRect = fruit.getBoundingClientRect();
+    const centerX = fruitRect.left + fruitRect.width / 2;
+    const centerY = fruitRect.top + fruitRect.height / 2;
+    const fruitData = fruit.fruitData;
+    
+    // Create fruit halves
+    for (let i = 0; i < 2; i++) {
+      const half = document.createElement('div');
+      half.className = `fruit-half ${i === 0 ? 'left' : 'right'}`;
+      half.style.width = fruitRect.width + 'px';
+      half.style.height = fruitRect.height + 'px';
+      half.style.left = fruitRect.left + 'px';
+      half.style.top = fruitRect.top + 'px';
+      half.style.background = fruit.style.background;
+      half.style.fontSize = fruit.style.fontSize;
+      half.textContent = fruitData.type.emoji;
+      half.style.display = 'flex';
+      half.style.alignItems = 'center';
+      half.style.justifyContent = 'center';
+      half.style.color = '#fff';
+      half.style.fontWeight = '800';
+      half.style.textShadow = '2px 2px 4px rgba(0,0,0,0.8)';
+      
+      document.body.appendChild(half);
+      setTimeout(() => half.remove(), 1000);
+    }
+    
+    // Create juice particles
+    this.createJuiceParticles(centerX, centerY, fruitData.type.juice);
+    
+    // Remove original fruit
+    setTimeout(() => {
+      if (fruit.parentNode) {
+        fruit.remove();
+      }
+    }, 100);
+  }
+
+  createJuiceParticles(x, y, juiceColor) {
+    const particleCount = 15;
+    for (let i = 0; i < particleCount; i++) {
+      const particle = document.createElement('div');
+      particle.className = 'juice-particle';
+      particle.style.left = x + 'px';
+      particle.style.top = y + 'px';
+      particle.style.backgroundColor = juiceColor;
+      
+      const angle = (Math.PI * 2 * i) / particleCount;
+      const velocity = 80 + Math.random() * 60;
+      const dx = Math.cos(angle) * velocity;
+      const dy = Math.sin(angle) * velocity;
+      
+      particle.style.setProperty('--dx', dx + 'px');
+      particle.style.setProperty('--dy', dy + 'px');
+      
+      document.body.appendChild(particle);
+      setTimeout(() => particle.remove(), 1200);
+    }
+  }
+
+  showComboDisplay() {
+    let comboEl = document.querySelector('.combo-display');
+    if (comboEl) {
+      comboEl.remove();
+    }
+    
+    if (this.combo > 1) {
+      comboEl = document.createElement('div');
+      comboEl.className = 'combo-display';
+      comboEl.innerHTML = `${this.combo}x COMBO!`;
+      document.body.appendChild(comboEl);
+      
+      setTimeout(() => {
+        if (comboEl.parentNode) comboEl.remove();
+      }, 1500);
+    }
+  }
+
+  createFireworks() {
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    
+    for (let i = 0; i < 30; i++) {
+      setTimeout(() => {
+        const firework = document.createElement('div');
+        firework.className = 'firework';
+        firework.style.left = (centerX + (Math.random() - 0.5) * 200) + 'px';
+        firework.style.top = (centerY + (Math.random() - 0.5) * 200) + 'px';
+        firework.style.backgroundColor = this.fruitTypes[Math.floor(Math.random() * this.fruitTypes.length)].color;
+        
+        const fx = (Math.random() - 0.5) * 300;
+        const fy = (Math.random() - 0.5) * 300;
+        firework.style.setProperty('--fx', fx + 'px');
+        firework.style.setProperty('--fy', fy + 'px');
+        
+        document.body.appendChild(firework);
+        setTimeout(() => firework.remove(), 2000);
+      }, i * 50);
+    }
+  }
+
+  showSuccess(text) {
+    const message = document.createElement('div');
+    message.className = 'success-message';
+    message.textContent = text;
+    document.body.appendChild(message);
+    setTimeout(() => message.remove(), 2500);
+  }
+
+  updateUI() {
+    document.getElementById('score').textContent = this.score;
+    document.getElementById('level').textContent = this.level;
+    document.getElementById('combo').textContent = this.combo;
+    document.getElementById('sliced').textContent = this.sliced;
+    document.getElementById('highScore').textContent = this.highScore;
+  }
+
+  togglePause() {
+    this.gamePaused = !this.gamePaused;
+    const btn = document.getElementById('pauseBtn');
+    btn.textContent = this.gamePaused ? '▶️ Resume' : '⏸️ Pause';
+    
+    if (!this.gamePaused) {
+      this.startFruitSpawning();
+    } else {
+      clearTimeout(this.fruitSpawnTimer);
+    }
+  }
+
+  resetGame() {
+    // Clear all game elements
+    clearTimeout(this.fruitSpawnTimer);
+    clearTimeout(this.comboTimer);
+    
+    this.fruits.forEach(fruit => {
+      if (fruit.parentNode) fruit.remove();
+    });
+    this.fruits = [];
+    
+    // Clear effects
+    document.querySelectorAll('.fruit-half, .juice-particle, .success-message, .combo-display, .firework, .slash-trail').forEach(el => el.remove());
+    
+    // Reset game state
+    this.score = 0;
+    this.level = 1;
+    this.sliced = 0;
+    this.combo = 0;
+    this.gamePaused = false;
+    this.gameOver = false;
+    
+    // Reset UI
+    this.updateUI();
+    document.getElementById('pauseBtn').textContent = '⏸️ Pause';
+    
+    // Restart fruit spawning if game is active
+    if (this.gameStarted) {
+      this.startFruitSpawning();
+    }
+  }
+
+  gameLoop() {
+    if (!this.gameStarted) return;
+    
+    // Clean up old fruits that went off screen
+    this.fruits = this.fruits.filter(fruit => {
+      const rect = fruit.getBoundingClientRect();
+      const isOffScreen = rect.right < -100 || rect.left > window.innerWidth + 100 || 
+                         rect.bottom < -100 || rect.top > window.innerHeight + 100;
+      if (isOffScreen && fruit.parentNode) {
+        fruit.remove();
+        return false;
+      }
+      return true;
+    });
+    
+    requestAnimationFrame(() => this.gameLoop());
+  }
+
+  darkenColor(hex, factor) {
+    const color = hex.replace('#', '');
+    const r = Math.max(0, Math.floor(parseInt(color.substring(0, 2), 16) * (1 - factor)));
+    const g = Math.max(0, Math.floor(parseInt(color.substring(2, 4), 16) * (1 - factor)));
+    const b = Math.max(0, Math.floor(parseInt(color.substring(4, 6), 16) * (1 - factor)));
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  stopGame() {
+    this.gameStarted = false;
+    clearTimeout(this.fruitSpawnTimer);
+    clearTimeout(this.comboTimer);
+    
+    // Stop camera
+    if (this.cameraHelper) {
+      this.cameraHelper.stop();
+    }
+    if (this.hands) {
+      this.hands.close();
+    }
+    if (this.video && this.video.srcObject) {
+      this.video.srcObject.getTracks().forEach(track => track.stop());
+      this.video.srcObject = null;
+    }
+    
+    // Hide cursors
+    Object.values(this.cursors || {}).forEach(cursor => {
+      cursor.style.display = 'none';
+    });
+  }
+}
+
+// Global game instance
+let game = new FruitNinjaGame();
+
+// Global functions for buttons
+function startGame() {
+  if (!game) game = new FruitNinjaGame();
+  game.startGame();
+}
+
+function togglePause() {
+  if (game) game.togglePause();
+}
+
+function toggleAudio() {
+  if (game) game.toggleAudio();
+}
+
+function resetGame() {
+  if (game) game.resetGame();
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  if (game) game.stopGame();
+});
+
+// Handle window resize
+window.addEventListener('resize', () => {
+  // Update any screen-dependent calculations if needed
+});
+
+</script>
+</body>
+</html>
