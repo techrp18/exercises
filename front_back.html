@@ -55,6 +55,34 @@
     border-radius: 12px;
     background: rgba(18, 18, 18, 0.7);
   }
+
+  /* Celebration Styles */
+  .celebration-message {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:100;
+    background: linear-gradient(45deg, #4CA1AF, #2C3E50); color:#fff;
+    padding: 25px 35px; border-radius:20px; font-weight:700; font-size: 3em;
+    animation: celebrationPop 3s ease-in-out forwards;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  }
+  @keyframes celebrationPop {
+    0% { transform:translate(-50%,-50%) scale(0); opacity:0; }
+    10% { transform:translate(-50%,-50%) scale(1.1); opacity:1; }
+    85% { transform:translate(-50%,-50%) scale(1.0); opacity:1; }
+    100% { transform:translate(-50%,-50%) scale(0.9); opacity:0; }
+  }
+  .confetti {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    opacity: 0;
+    z-index: 99;
+    animation: confetti-fall 2.5s ease-out forwards;
+  }
+  @keyframes confetti-fall {
+    0% { transform: translateY(-100px) rotateZ(0deg); opacity: 1; }
+    100% { transform: translateY(300px) rotateZ(360deg); opacity: 0; }
+  }
+
 </style>
 
 <!-- MediaPipe -->
@@ -65,6 +93,9 @@
   <div id="statusText">Not Tracking</div>
   <video id="video" autoplay muted playsinline></video>
   <canvas id="gameCanvas"></canvas>
+  
+  <audio id="backgroundMusic" src="musicbg.mp3" loop preload="auto"></audio>
+  <audio id="celebrationSound" src="audio.mp3" preload="auto"></audio>
 
   <div id="ui">
     <div>⬆️ Total Distance Forward: <span id="forwardScore">0</span></div>
@@ -85,9 +116,15 @@ class ContinuousMotionSensor {
     this.ctx = this.canvas.getContext('2d');
     this.statusTextEl = document.getElementById('statusText');
     
+    // Audio elements
+    this.backgroundMusic = document.getElementById('backgroundMusic');
+    this.celebrationSound = document.getElementById('celebrationSound');
+
     this.isTracking = false;
     this.forwardScore = 0;
     this.backwardScore = 0;
+    this.nextCelebrationMilestone = 50; // New: For tracking celebrations
+    this.confettiColors = ['#4CA1AF', '#2C3E50', '#f1c40f', '#e67e22', '#e74c3c'];
     
     // --- High-Precision Tuning ---
     this.interOcularDist = 0;
@@ -124,6 +161,10 @@ class ContinuousMotionSensor {
 
       const camera = new Camera(this.video, { onFrame: async () => await pose.send({image: this.video}), width: 1280, height: 720 });
       camera.start();
+      
+      if(this.backgroundMusic) {
+          this.backgroundMusic.play().catch(e => console.warn("Music autoplay was blocked by the browser."));
+      }
 
       this.isTracking = true;
       document.getElementById('startBtn').textContent = '✅ Sensor Active';
@@ -150,6 +191,7 @@ class ContinuousMotionSensor {
       
       const currentDist = Math.sqrt(Math.pow(this.leftEyePos.x - this.rightEyePos.x, 2) + Math.pow(this.leftEyePos.y - this.rightEyePos.y, 2));
       
+      if (this.interOcularDist === 0) { this.interOcularDist = currentDist; }
       this.interOcularDist += this.smoothing * (currentDist - this.interOcularDist);
     } else {
        this.statusTextEl.textContent = "No person detected.";
@@ -167,10 +209,19 @@ class ContinuousMotionSensor {
     }
 
     const delta = this.interOcularDist - this.prevInterOcularDist;
+    const currentDisplayScore = Math.round(this.forwardScore * this.scoreMultiplier);
 
     if (delta > this.deadzoneThreshold) {
         this.forwardScore += delta;
         this.statusTextEl.textContent = "Moving Forward";
+
+        // Check for celebration milestone
+        const newDisplayScore = Math.round(this.forwardScore * this.scoreMultiplier);
+        if (newDisplayScore >= this.nextCelebrationMilestone) {
+            this.showCelebration(this.nextCelebrationMilestone);
+            this.nextCelebrationMilestone += 50;
+        }
+
     } else if (delta < -this.deadzoneThreshold) {
         this.backwardScore += Math.abs(delta);
         this.statusTextEl.textContent = "Moving Backward";
@@ -186,6 +237,36 @@ class ContinuousMotionSensor {
     document.getElementById('forwardScore').textContent = Math.round(this.forwardScore * this.scoreMultiplier).toString();
     document.getElementById('backwardScore').textContent = Math.round(this.backwardScore * this.scoreMultiplier).toString();
   }
+  
+  showCelebration(milestone) {
+      if (this.celebrationSound) {
+          this.celebrationSound.currentTime = 0;
+          this.celebrationSound.play();
+      }
+      
+      // Create celebration message
+      const el = document.createElement('div');
+      el.className = 'celebration-message';
+      el.textContent = `🎉 ${milestone} Points! 🎉`;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 2900);
+
+      // Create confetti
+      for (let i = 0; i < 50; i++) {
+          const confetti = document.createElement('div');
+          confetti.className = 'confetti';
+          const startX = (Math.random() - 0.5) * window.innerWidth * 0.8;
+          const startY = (Math.random() - 0.5) * window.innerHeight * 0.8;
+          confetti.style.left = `calc(50% + ${startX}px)`;
+          confetti.style.top = `calc(50% + ${startY}px)`;
+          confetti.style.backgroundColor = this.confettiColors[Math.floor(Math.random() * this.confettiColors.length)];
+          confetti.style.animationDelay = `${Math.random() * 0.2}s`;
+          confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+          document.body.appendChild(confetti);
+          setTimeout(() => confetti.remove(), 2500);
+      }
+  }
+
 
   draw() {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -209,6 +290,7 @@ class ContinuousMotionSensor {
   reset() {
     this.forwardScore = 0;
     this.backwardScore = 0;
+    this.nextCelebrationMilestone = 50; // Reset the milestone tracker
     this.updateUI();
   }
 
@@ -224,4 +306,4 @@ class ContinuousMotionSensor {
 const app = new ContinuousMotionSensor();
 </script>
 </body>
-</html>```
+</html>

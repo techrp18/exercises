@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Body Dot Eraser Game</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+      height:100vh;display:flex;flex-direction:column;overflow:hidden
+    }
+    .header{background:rgba(0,0,0,.8);color:#fff;text-align:center;padding:10px;backdrop-filter:blur(10px)}
+    .main-container{flex:1;position:relative;overflow:hidden; background-color: #000;}
+    #videoContainer{position:absolute;inset:0;}
+    #video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+    #gameCanvas{position:absolute;inset:0;z-index:3}
+    .dots-counter {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 10em; /* Large font size for the counter */
+      font-weight: bold;
+      color: rgba(30, 39, 194, 0.9); /* Changed to solid, dark blue */
+      z-index: 2;
+      pointer-events: none;
+      user-select: none;
+      transition: opacity 0.3s;
+      text-shadow: 2px 2px 8px rgba(0,0,0,0.5);
+    }
+    .controls{
+      position:absolute;bottom:20px;left:50%;transform:translateX(-50%);
+      display:flex;gap:12px;background:rgba(0,0,0,.8);padding:12px 16px;border-radius:22px;
+      backdrop-filter:blur(10px);z-index:10;flex-wrap:wrap;justify-content:center
+    }
+    .control-btn{
+      padding:10px 16px;border:none;border-radius:18px;cursor:pointer;font-weight:700;
+      transition:.2s;display:flex;align-items:center;gap:8px;font-size:14px;color:#fff
+    }
+    .control-btn:hover{transform:translateY(-2px);box-shadow:0 5px 15px rgba(0,0,0,.3)}
+    .calibrate-btn{background:linear-gradient(45deg,#2196f3,#1976d2)}
+    .skip-btn{background:linear-gradient(45deg,#4caf50,#66bb6a)}
+    .settings{
+      position:absolute;top:20px;right:20px;background:rgba(0,0,0,.8);padding:14px;border-radius:14px;
+      backdrop-filter:blur(10px);z-index:10;color:#fff;min-width:240px
+    }
+    .setting-item{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+    .setting-item:last-child{margin-bottom:0}
+    .setting-item input[type="range"]{width:120px}
+    .status{
+      position:absolute;top:20px;left:20px;background:rgba(0,0,0,.8);color:#fff;padding:12px;border-radius:10px;backdrop-filter:blur(10px);z-index:10;min-width:280px
+    }
+    .score-board{
+      position:absolute;top:90px;left:20px;background:rgba(0,0,0,.8);color:#fff;padding:12px;border-radius:10px;backdrop-filter:blur(10px);z-index:10;min-width:280px
+    }
+    .loading{
+      position:absolute;inset:0;margin:auto;height:max-content;width:max-content;
+      background:rgba(0,0,0,.9);color:#fff;padding:24px;border-radius:14px;z-index:20;text-align:center;display:none
+    }
+    .eraser-cursor{
+      position:absolute;border:3px solid #fff;border-radius:50%;
+      transform:translate(-50%,-50%);pointer-events:none;z-index:5;opacity:0;transition:opacity .2s, width .2s, height .2s;
+      background: rgba(255, 255, 255, 0.2);
+    }
+    .eraser-cursor.active{opacity:1;box-shadow:0 0 20px rgba(255,255,255,.6)}
+    .success-message {
+      position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:50;
+      background: linear-gradient(45deg, #4caf50, #81c784); color:#fff;
+      padding: 20px 28px; border-radius:16px; font-weight:700; font-size: 2.2em;
+      animation: successPop 2.5s ease-in-out forwards;
+    }
+    @keyframes successPop {
+      0% { transform:translate(-50%,-50%) scale(0); opacity:0; }
+      10% { transform:translate(-50%,-50%) scale(1.1); opacity:1; }
+      90% { transform:translate(-50%,-50%) scale(1.0); opacity:1; }
+      100% { transform:translate(-50%,-50%) scale(0.9); opacity:0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+  <h1>Dot Eraser Challenge</h1>
+  </div>
+
+  <div id="mainContainer" class="main-container">
+    <div id="loading" class="loading">Loading...</div>
+    <div id="videoContainer">
+      <video id="video" autoplay muted playsinline></video>
+      <div id="eraserCursor" class="eraser-cursor"></div>
+      <div id="dotsCounter" class="dots-counter"></div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+  <audio id="backgroundMusic" src="musicbg.mp3" loop preload="auto"></audio>
+  <audio id="winSound" src="audio.mp3" preload="auto"></audio>
+
+  <div class="controls">
+    <button id="skipBtn" class="control-btn skip-btn">🔄 Skip Puzzle</button>
+    <button id="calibrateBtn" class="control-btn calibrate-btn">🎯 Recalibrate Pointer</button>
+  </div>
+
+  <div class="settings">
+    <div class="setting-item">
+      <label>Eraser Size:</label>
+      <input type="range" id="eraserSize" min="20" max="150" value="80"/>
+      <span id="eraserSizeValue">80</span>
+    </div>
+    <div class="setting-item">
+      <label>Smoothing:</label>
+      <input type="range" id="smoothing" min="0.05" max="0.9" step="0.05" value="0.35"/>
+      <span id="smoothingValue">35%</span>
+    </div>
+  </div>
+
+  <div id="status" class="status">Initializing...</div>
+  <div class="score-board">
+    <div><strong>Score:</strong> <span id="score">0</span></div>
+    <div><strong>Dots Left:</strong> <span id="dotsLeft">N/A</span></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+
+  <script>
+  class DotEraserGame {
+    constructor(){
+      // Core elements
+      this.video = document.getElementById('video');
+      this.gameCanvas = document.getElementById('gameCanvas');
+      this.gameCtx = this.gameCanvas.getContext('2d');
+      this.mainContainer = document.getElementById('mainContainer');
+      this.eraserCursor = document.getElementById('eraserCursor');
+      this.loading = document.getElementById('loading');
+      this.status = document.getElementById('status');
+      
+      // Audio elements
+      this.backgroundMusic = document.getElementById('backgroundMusic');
+      this.winSound = document.getElementById('winSound');
+      
+      // Game elements
+      this.scoreEl = document.getElementById('score');
+      this.dotsLeftEl = document.getElementById('dotsLeft');
+      this.dotsCounterEl = document.getElementById('dotsCounter'); // The new large counter
+      
+      // Controls
+      this.calibrateBtn = document.getElementById('calibrateBtn');
+      this.skipBtn = document.getElementById('skipBtn');
+
+      // Settings
+      this.eraserSizeSlider = document.getElementById('eraserSize');
+      this.eraserSizeValue  = document.getElementById('eraserSizeValue');
+      this.smoothingSlider = document.getElementById('smoothing');
+      this.smoothingValue  = document.getElementById('smoothingValue');
+      
+      // State
+      this.smoothed = {x:0, y:0};
+      
+      // Game State
+      this.score = 0;
+      this.dots = [];
+      this.dotsLeft = 0;
+      this.dotTemplates = null;
+      this.possibleTasks = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789".split('');
+
+      // Camera/ML state
+      this.pose = null;
+      this.camera = null;
+
+      this.bindUI();
+      this.initGame();
+      window.addEventListener('resize', ()=>this.onResize());
+    }
+
+    bindUI(){
+      this.skipBtn.addEventListener('click', () => this.generateNewTask());
+      this.calibrateBtn.addEventListener('click', () => {
+        this.smoothed = {x:0, y:0};
+        this.setStatus('Pointer state recalibrated.');
+      });
+
+      this.eraserSizeSlider.addEventListener('input', e => {
+        this.eraserSizeValue.textContent = e.target.value;
+        this.updateEraserCursor();
+      });
+      this.smoothingSlider.addEventListener('input', e => this.smoothingValue.textContent = `${Math.round(parseFloat(e.target.value)*100)}%`);
+    }
+
+    onResize() {
+        this.gameCanvas.width = this.mainContainer.clientWidth;
+        this.gameCanvas.height = this.mainContainer.clientHeight;
+        if (this.currentTask) {
+            this.generateTask(this.currentTask);
+        }
+    }
+    
+    async initGame() {
+      this.loading.style.display = 'block';
+      this.loading.innerHTML = '<h3>Generating character shapes...</h3>';
+      this.dotTemplates = await this.createDotTemplates(this.possibleTasks);
+      
+      await this.initCamera();
+      this.initPose();
+      this.generateNewTask();
+    }
+    
+    async initCamera() {
+      this.loading.innerHTML = '<h3>Starting Camera...</h3><p>Please allow camera access</p>';
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' } });
+        this.video.srcObject = stream;
+        await new Promise(res => this.video.onloadedmetadata = res);
+        this.onResize();
+        this.loading.style.display = 'none';
+        this.setStatus('Camera started successfully.');
+        
+        // Start background music
+        if (this.backgroundMusic) {
+            this.backgroundMusic.play().catch(e => console.warn("Background music failed to play", e));
+        }
+
+      } catch (err) {
+        this.loading.innerHTML = `<h3 style="color:red">Camera Error</h3><p>${err.message}</p>`;
+        this.setStatus('Camera permission denied.');
+      }
+    }
+
+    initPose() {
+      this.pose = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+      this.pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+      this.pose.onResults(r => this.onPoseResults(r));
+      
+      this.camera = new Camera(this.video, { 
+        onFrame: async () => { await this.pose.send({ image: this.video }); }, 
+        width: 1280, 
+        height: 720 
+      });
+      this.camera.start();
+      this.setStatus('Pose detection model loaded.');
+    }
+
+    onPoseResults(results) {
+      if (!results.poseLandmarks) {
+        this.eraserCursor.classList.remove('active');
+        return;
+      }
+      
+      const lm = results.poseLandmarks;
+      const indexTip = lm[20];
+      const elbow = lm[14];
+      let activeLandmark = null;
+
+      if (indexTip && indexTip.visibility > 0.7) {
+        activeLandmark = indexTip;
+        this.setStatus("Controlling with: Right Hand");
+      } else if (elbow && elbow.visibility > 0.8) {
+        activeLandmark = elbow;
+        this.setStatus("Controlling with: Right Elbow");
+      }
+
+      if (activeLandmark) {
+        const pt = { 
+            x: (1 - activeLandmark.x) * this.gameCanvas.width, 
+            y: activeLandmark.y * this.gameCanvas.height 
+        };
+
+        const s = parseFloat(this.smoothingSlider.value);
+        if(this.smoothed.x === 0) {
+            this.smoothed.x = pt.x;
+            this.smoothed.y = pt.y;
+        }
+        this.smoothed.x = this.smoothed.x * s + pt.x * (1 - s);
+        this.smoothed.y = this.smoothed.y * s + pt.y * (1 - s);
+        
+        this.updateEraserCursor();
+        this.eraseDotsAt(this.smoothed);
+      } else {
+        this.eraserCursor.classList.remove('active');
+        this.setStatus("No valid control point detected.");
+      }
+    }
+
+    updateEraserCursor() {
+      const size = parseInt(this.eraserSizeSlider.value);
+      this.eraserCursor.style.width = `${size}px`;
+      this.eraserCursor.style.height = `${size}px`;
+      this.eraserCursor.style.left = `${this.smoothed.x}px`;
+      this.eraserCursor.style.top = `${this.smoothed.y}px`;
+      this.eraserCursor.classList.add('active');
+    }
+    
+    setStatus(msg) { this.status.textContent = msg; }
+    
+    // --- GAME LOGIC ---
+
+    generateNewTask() {
+      const task = this.possibleTasks[Math.floor(Math.random() * this.possibleTasks.length)];
+      this.currentTask = task;
+      this.generateTask(task);
+    }
+    
+    generateTask(task) {
+      const template = this.dotTemplates[task];
+      if (!template) return;
+      
+      this.dots = template.map(p => ({
+        x: p.x * this.gameCanvas.width,
+        y: p.y * this.gameCanvas.height,
+        isErased: false
+      }));
+      
+      this.dotsLeft = this.dots.length;
+      this.dotsLeftEl.textContent = this.dotsLeft;
+      this.dotsCounterEl.textContent = this.dotsLeft; // Update large counter
+      this.drawAllDots();
+    }
+
+    drawAllDots() {
+        this.gameCtx.clearRect(0, 0, this.gameCanvas.width, this.gameCanvas.height);
+        this.gameCtx.fillStyle = '#ff4757'; // Red color for dots
+        for (const dot of this.dots) {
+            if (!dot.isErased) {
+                this.gameCtx.beginPath();
+                this.gameCtx.arc(dot.x, dot.y, 12, 0, Math.PI * 2); // Increased radius to 12 (2x size)
+                this.gameCtx.fill();
+            }
+        }
+    }
+    
+    eraseDotsAt(p) {
+        if (this.dotsLeft === 0) return;
+        
+        const eraserRadius = parseInt(this.eraserSizeSlider.value) / 2;
+        let needsRedraw = false;
+
+        for (const dot of this.dots) {
+            if (!dot.isErased) {
+                const dx = p.x - dot.x;
+                const dy = p.y - dot.y;
+                if (Math.sqrt(dx*dx + dy*dy) < eraserRadius) {
+                    dot.isErased = true;
+                    this.dotsLeft--;
+                    needsRedraw = true;
+                }
+            }
+        }
+        
+        if(needsRedraw) {
+            this.dotsLeftEl.textContent = this.dotsLeft;
+            this.dotsCounterEl.textContent = this.dotsLeft; // Update large counter
+            this.drawAllDots();
+            if(this.dotsLeft === 0) {
+                this.handleWin();
+            }
+        }
+    }
+    
+    handleWin() {
+        if (this.winSound) {
+            this.winSound.currentTime = 0;
+            this.winSound.play();
+        }
+        const points = this.dots.length;
+        this.score += points;
+        this.scoreEl.textContent = this.score;
+        this.showSuccess(`Complete! +${points}`);
+        this.dots = [];
+        this.dotsCounterEl.textContent = ''; // Clear large counter on win
+        setTimeout(() => this.generateNewTask(), 2000);
+    }
+    
+    showSuccess(text) {
+        const el = document.createElement('div');
+        el.className = 'success-message';
+        el.textContent = text;
+        this.mainContainer.appendChild(el);
+        setTimeout(() => el.remove(), 2400);
+    }
+    
+    async createDotTemplates(chars) {
+        const templates = {};
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        const size = 500;
+        tempCanvas.width = size;
+        tempCanvas.height = size;
+        
+        for (const char of chars) {
+            tempCtx.clearRect(0, 0, size, size);
+            tempCtx.fillStyle = 'white';
+            tempCtx.font = `bold ${size * 0.8}px Arial`;
+            tempCtx.textAlign = 'center';
+            tempCtx.textBaseline = 'middle';
+            tempCtx.fillText(char, size / 2, size / 2 + size * 0.05); // Minor vertical adjustment
+            
+            const imageData = tempCtx.getImageData(0, 0, size, size);
+            const points = [];
+            const density = 18;
+            
+            for (let y = 0; y < size; y += density) {
+                for (let x = 0; x < size; x += density) {
+                    const alpha = imageData.data[(y * size + x) * 4 + 3];
+                    if (alpha > 128) {
+                        points.push({ x: x / size, y: y / size });
+                    }
+                }
+            }
+            templates[char] = points;
+        }
+        return templates;
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => new DotEraserGame());
+  </script>
+</body>
+</html>

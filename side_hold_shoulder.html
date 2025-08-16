@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Shoulder Exercise Game</title>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; overflow:hidden; background:#1a1a2e; color:#fff; }
+
+  /* Full-screen camera */
+  #video {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh; object-fit:cover;
+    transform: scaleX(-1); /* mirror */
+    z-index:0;
+  }
+
+  /* UI Panel */
+  #ui {
+    position:absolute; left:20px; top:20px; z-index:20;
+    background: rgba(0,0,0,0.85); color:#fff; padding:16px; border-radius:12px;
+    min-width:320px; font-size:15px; border: 2px solid #4ecdc4;
+  }
+
+  /* Settings Panel */
+  #settings {
+    position:absolute; right:20px; top:20px; z-index:20;
+    background: rgba(0,0,0,0.85); color:#fff; padding:16px; border-radius:12px;
+    min-width:280px; font-size:14px; border: 2px solid #ff6b6b;
+  }
+
+  /* Controls */
+  #controls {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:20px; z-index:20; 
+    display:flex; gap:12px; flex-wrap:wrap; justify-content:center;
+  }
+  
+  button {
+    background: linear-gradient(45deg,#4ecdc4,#44a08d); color:#fff; border:0; 
+    padding:12px 18px; border-radius:25px; cursor:pointer; font-weight:700; 
+    box-shadow:0 4px 15px rgba(0,0,0,0.2); transition: all 0.3s ease;
+    font-size:14px;
+  }
+  button:hover { transform: translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,0.3); }
+  button:disabled { opacity:0.6; cursor:not-allowed; transform:none; }
+  button.active { background: linear-gradient(45deg,#ff6b6b,#ee5a52); }
+
+  /* Status center */
+  #status {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:20;
+    color:#fff; text-align:center; background: rgba(0,0,0,0.8); padding:24px; 
+    border-radius:15px; max-width:500px; border: 2px solid #4ecdc4;
+  }
+
+  /* Sliders */
+  .slider-container {
+    margin: 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  
+  .slider-container label {
+    min-width: 100px;
+    font-size: 13px;
+  }
+  
+  input[type="range"] {
+    flex: 1;
+    height: 6px;
+    border-radius: 3px;
+    background: #333;
+    outline: none;
+    -webkit-appearance: none;
+  }
+  
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #4ecdc4;
+    cursor: pointer;
+  }
+
+  /* Exercise targets and arms */
+  .target-line {
+    position: absolute;
+    height: 4px;
+    background: linear-gradient(90deg, #ff6b6b, #ff8e53);
+    border-radius: 2px;
+    z-index: 10;
+    box-shadow: 0 0 10px rgba(255,107,107,0.5);
+    opacity: 0.9;
+  }
+
+  .arm-line {
+    position: absolute;
+    height: 3px;
+    border-radius: 2px;
+    z-index: 12;
+    transform-origin: left center;
+  }
+
+  .arm-line.left { background: linear-gradient(90deg, #4ecdc4, #44a08d); }
+  .arm-line.right { background: linear-gradient(90deg, #ffd93d, #ff9f43); }
+
+  .shoulder-point {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    z-index: 15;
+    transform: translate(-50%, -50%);
+  }
+
+  .shoulder-point.left { background: #4ecdc4; }
+  .shoulder-point.right { background: #ffd93d; }
+
+  /* Progress indicators */
+  .progress-ring {
+    position: absolute;
+    z-index: 25;
+    transform: translate(-50%, -50%);
+  }
+  .progress-ring circle {
+    fill: transparent;
+    stroke: #ff6b6b;
+    stroke-width: 4;
+    stroke-dasharray: 0 100;
+    transition: stroke-dasharray 0.1s linear;
+  }
+
+  /* On-Screen Timer */
+  .on-screen-timer {
+    position: absolute;
+    z-index: 26;
+    font-size: 20px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.7);
+    transform: translateX(-50%);
+  }
+  
+  /* Success message */
+  .success-message {
+    position:absolute; left:50%; top:30%; transform:translate(-50%,-50%); z-index:101;
+    background: rgba(46,213,115,0.95); color:#fff; padding:16px 24px; 
+    border-radius:15px; font-weight:700; font-size:18px;
+    animation: successPop 4.5s ease forwards;
+  }
+  @keyframes successPop {
+    0%{transform:translate(-50%,-50%) scale(0);opacity:0}
+    10%{transform:translate(-50%,-50%) scale(1.1);opacity:1}
+    90%{transform:translate(-50%,-50%) scale(1); opacity: 1;}
+    100%{transform:translate(-50%,-50%) scale(0.95);opacity:0}
+  }
+
+  /* Full Screen Emoji Blast */
+  .emoji-blast {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    font-size: 40px;
+    z-index: 100;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 1;
+    transition: transform 4s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 4s linear;
+  }
+
+  /* Info text */
+  .info-text { font-size: 12px; color: #aaa; margin-top: 8px; line-height: 1.4; }
+  .angle-display { font-size: 12px; color: #4ecdc4; margin-top: 4px; }
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  
+  <audio id="backgroundMusic" src="musicbg.mp3" loop preload="auto"></audio>
+  <audio id="celebrationSound" src="audio.mp3" preload="auto"></audio>
+
+  <div id="ui">
+    <div><strong>🎯 Score:</strong> <span id="score">0</span></div>
+    <div><strong>⭐ Level:</strong> <span id="level">1</span></div>
+    <div><strong>🎈 Completed:</strong> <span id="completed">0</span></div>
+    <div><strong>🏆 High Score:</strong> <span id="highScore">0</span></div>
+    <div style="margin-top:12px;"><strong>👤 Pose:</strong> <span id="poseStatus">Not Detected</span></div>
+    <div style="margin-top:8px;"><strong>⏱️ Hold Timer:</strong> <span id="holdTimer">L: 0.0s | R: 0.0s</span></div>
+    <div class="angle-display" id="angleDisplay"></div>
+  </div>
+
+  <div id="settings">
+    <h3>Exercise Settings</h3>
+
+    <div style="border: 1px solid #4ecdc4; padding: 10px; margin: 10px 0; border-radius: 8px;">
+      <h4 style="color: #4ecdc4; margin-bottom: 8px;">🫲 Left Arm</h4>
+      <div class="slider-container"><label>Target Angle:</label><input type="range" id="leftAngleSlider" min="0" max="360" value="180" step="5"><span id="leftAngleValue">180°</span></div>
+      <div class="slider-container"><label>Hold Time:</label><input type="range" id="leftTimeSlider" min="2" max="10" value="5" step="0.5"><span id="leftTimeValue">5.0s</span></div>
+      <div class="slider-container"><label>Tolerance:</label><input type="range" id="leftToleranceSlider" min="5" max="25" value="15" step="2"><span id="leftToleranceValue">±15°</span></div>
+    </div>
+
+    <div style="border: 1px solid #ffd93d; padding: 10px; margin: 10px 0; border-radius: 8px;">
+      <h4 style="color: #ffd93d; margin-bottom: 8px;">🫱 Right Arm</h4>
+      <div class="slider-container"><label>Target Angle:</label><input type="range" id="rightAngleSlider" min="0" max="360" value="0" step="5"><span id="rightAngleValue">0°</span></div>
+      <div class="slider-container"><label>Hold Time:</label><input type="range" id="rightTimeSlider" min="2" max="10" value="5" step="0.5"><span id="rightTimeValue">5.0s</span></div>
+      <div class="slider-container"><label>Tolerance:</label><input type="range" id="rightToleranceSlider" min="5" max="25" value="15" step="2"><span id="rightToleranceValue">±15°</span></div>
+    </div>
+
+    <div class="info-text">
+      Adjust the target angle for each arm (0-360°).<br>
+      0° is right, 90° is up, 180° is left, 270° is down.<br>
+      Match both arms to the red lines and hold.
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="startBtn" onclick="startGame()">🎮 Start Exercise</button>
+    <button id="resetBtn" onclick="resetGame()">🔄 Reset</button>
+    <button id="calibrateBtn" onclick="calibratePose()" disabled>📐 Calibrate</button>
+  </div>
+
+  <div id="status">
+    <h2>💪 Shoulder Exercise Game</h2>
+    <p>Click "Start Exercise" and allow camera access.</p>
+    <p>Lift your arms to match the target lines and hold the position!</p>
+  </div>
+
+<script>
+class ShoulderExerciseGame {
+  constructor(){
+    this.video = document.getElementById('video');
+
+    // Audio elements
+    this.backgroundMusic = document.getElementById('backgroundMusic');
+    this.celebrationSound = document.getElementById('celebrationSound');
+
+    // Game state
+    this.gameStarted = false;
+    this.score = 0;
+    this.level = 1;
+    this.completed = 0;
+    this.celebrationEmojis = ['🎉', '✨', '🎊', '🌟', '🎈', '👍', '💪'];
+
+    // Settings
+    this.targetAngles = { left: 180, right: 0 };
+    this.holdTimes = { left: 5.0, right: 5.0 };
+    this.tolerances = { left: 15, right: 15 };
+
+    // Pose tracking
+    this.pose = null;
+    this.cameraHelper = null;
+    this.currentPose = null;
+    this.shoulders = { left: null, right: null };
+    this.arms = { left: null, right: null };
+
+    // Exercise state
+    this.holdStartTime = { left: null, right: null };
+    this.currentHoldTime = { left: 0, right: 0 };
+    this.inTargetZone = { left: false, right: false };
+    this.exerciseActive = false;
+
+    // UI elements
+    this.targetLines = { left: null, right: null };
+    this.armLines = { left: null, right: null };
+    this.shoulderPoints = { left: null, right: null };
+    this.progressRings = { left: null, right: null };
+    this.onScreenTimers = { left: null, right: null };
+
+    // High score
+    const stored = parseInt(localStorage.getItem("shoulderExerciseHighScore"));
+    this.highScore = (!isNaN(stored) && stored > 0) ? stored : 0;
+
+    this.initializeUI();
+    this.updateUI();
+
+    window.addEventListener('beforeunload', () => this.stopAll());
+  }
+
+  initializeUI(){
+    // Left arm slider event listeners
+    document.getElementById('leftAngleSlider').addEventListener('input', (e) => {
+      this.targetAngles.left = parseInt(e.target.value);
+      document.getElementById('leftAngleValue').textContent = this.targetAngles.left + '°';
+      this.updateTargetLines();
+    });
+    document.getElementById('leftTimeSlider').addEventListener('input', (e) => {
+      this.holdTimes.left = parseFloat(e.target.value);
+      document.getElementById('leftTimeValue').textContent = this.holdTimes.left.toFixed(1) + 's';
+    });
+    document.getElementById('leftToleranceSlider').addEventListener('input', (e) => {
+      this.tolerances.left = parseInt(e.target.value);
+      document.getElementById('leftToleranceValue').textContent = '±' + this.tolerances.left + '°';
+    });
+
+    // Right arm slider event listeners
+    document.getElementById('rightAngleSlider').addEventListener('input', (e) => {
+      this.targetAngles.right = parseInt(e.target.value);
+      document.getElementById('rightAngleValue').textContent = this.targetAngles.right + '°';
+      this.updateTargetLines();
+    });
+    document.getElementById('rightTimeSlider').addEventListener('input', (e) => {
+      this.holdTimes.right = parseFloat(e.target.value);
+      document.getElementById('rightTimeValue').textContent = this.holdTimes.right.toFixed(1) + 's';
+    });
+    document.getElementById('rightToleranceSlider').addEventListener('input', (e) => {
+      this.tolerances.right = parseInt(e.target.value);
+      document.getElementById('rightToleranceValue').textContent = '±' + this.tolerances.right + '°';
+    });
+  }
+
+  async startGame(){
+    try {
+      document.getElementById('status').style.display = 'none';
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: 1280, height: 720, facingMode: 'user' }, 
+        audio: false 
+      });
+      this.video.srcObject = stream;
+      await new Promise(resolve => { this.video.onloadeddata = () => resolve(); });
+
+      this.pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+      this.pose.setOptions({
+        modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false,
+        smoothSegmentation: false, minDetectionConfidence: 0.7, minTrackingConfidence: 0.6
+      });
+      this.pose.onResults(results => this.onPoseResults(results));
+
+      this.cameraHelper = new Camera(this.video, {
+        onFrame: async () => { await this.pose.send({ image: this.video }); },
+        width: 1280, height: 720
+      });
+      this.cameraHelper.start();
+
+      if (this.backgroundMusic) {
+          this.backgroundMusic.play().catch(e => console.warn("Background music failed to play:", e));
+      }
+
+      this.gameStarted = true;
+      this.exerciseActive = true;
+      this.createTargetLines();
+      this.createArmLines();
+      this.createShoulderPoints();
+      this.createProgressRings();
+      this.createOnScreenTimers();
+      this.loop();
+
+      document.getElementById('startBtn').textContent = '✅ Camera Active';
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('calibrateBtn').disabled = false;
+    } catch (err) {
+      console.error('startGame error', err);
+      alert('Could not start camera – please allow permissions and try again.');
+    }
+  }
+
+  normalizedToVideoCoords(normX, normY){
+    const rect = this.video.getBoundingClientRect();
+    const mirroredX = 1 - normX;
+    return { x: rect.left + mirroredX * rect.width, y: rect.top + normY * rect.height };
+  }
+
+  onPoseResults(results){
+    if (results.poseLandmarks && results.poseLandmarks.length > 0) {
+      this.currentPose = results.poseLandmarks;
+      const leftShoulder = results.poseLandmarks[11], rightShoulder = results.poseLandmarks[12];
+      const leftWrist = results.poseLandmarks[15], rightWrist = results.poseLandmarks[16];
+
+      if (leftShoulder && rightShoulder) {
+        const leftShoulderPos = this.normalizedToVideoCoords(leftShoulder.x, leftShoulder.y);
+        const rightShoulderPos = this.normalizedToVideoCoords(rightShoulder.x, rightShoulder.y);
+        this.shoulders = { left: leftShoulderPos, right: rightShoulderPos };
+        
+        ['left', 'right'].forEach(side => {
+          if (this.shoulderPoints[side]) {
+            this.shoulderPoints[side].style.left = this.shoulders[side].x + 'px';
+            this.shoulderPoints[side].style.top = this.shoulders[side].y + 'px';
+            this.shoulderPoints[side].style.display = 'block';
+          }
+        });
+        
+        this.arms.left = leftWrist ? { angle: this.calculateArmAngle(leftShoulderPos, this.normalizedToVideoCoords(leftWrist.x, leftWrist.y)), wrist: this.normalizedToVideoCoords(leftWrist.x, leftWrist.y) } : null;
+        this.arms.right = rightWrist ? { angle: this.calculateArmAngle(rightShoulderPos, this.normalizedToVideoCoords(rightWrist.x, rightWrist.y)), wrist: this.normalizedToVideoCoords(rightWrist.x, rightWrist.y) } : null;
+        
+        if (this.arms.left) this.updateArmLine('left', leftShoulderPos, this.arms.left.wrist);
+        if (this.arms.right) this.updateArmLine('right', rightShoulderPos, this.arms.right.wrist);
+
+        this.updateTargetLines();
+        this.checkExerciseProgress();
+        document.getElementById('poseStatus').textContent = 'Detected';
+      }
+    } else {
+      document.getElementById('poseStatus').textContent = 'Not Detected';
+      this.currentPose = null;
+      this.hideVisualElements();
+    }
+  }
+
+  calculateArmAngle(shoulder, wrist) {
+    const dx = wrist.x - shoulder.x, dy = wrist.y - shoulder.y;
+    let angle = Math.atan2(-dy, dx) * (180 / Math.PI);
+    if (angle < 0) angle += 360;
+    return angle;
+  }
+
+  createTargetLines() { ['left', 'right'].forEach(side => { const el = document.createElement('div'); el.className = 'target-line'; el.style.display = 'none'; document.body.appendChild(el); this.targetLines[side] = el; }); }
+  createArmLines() { ['left', 'right'].forEach(side => { const el = document.createElement('div'); el.className = `arm-line ${side}`; el.style.display = 'none'; document.body.appendChild(el); this.armLines[side] = el; }); }
+  createShoulderPoints() { ['left', 'right'].forEach(side => { const el = document.createElement('div'); el.className = `shoulder-point ${side}`; el.style.display = 'none'; document.body.appendChild(el); this.shoulderPoints[side] = el; }); }
+  createOnScreenTimers() { ['left', 'right'].forEach(side => { const el = document.createElement('div'); el.className = 'on-screen-timer'; el.style.display = 'none'; document.body.appendChild(el); this.onScreenTimers[side] = el; }); }
+
+  createProgressRings() {
+    ['left', 'right'].forEach(side => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', '60'); svg.setAttribute('height', '60');
+      svg.className = 'progress-ring'; svg.style.display = 'none';
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', '30'); circle.setAttribute('cy', '30'); circle.setAttribute('r', '25');
+      svg.appendChild(circle); document.body.appendChild(svg);
+      this.progressRings[side] = { svg, circle };
+    });
+  }
+
+  updateTargetLines() {
+    if (!this.shoulders.left || !this.shoulders.right) return;
+    const lineLength = 120;
+    ['left', 'right'].forEach(side => {
+      const shoulderPos = this.shoulders[side], line = this.targetLines[side];
+      if (!line || !shoulderPos) return;
+      const targetAngle = this.targetAngles[side];
+      line.style.left = shoulderPos.x + 'px'; line.style.top = shoulderPos.y + 'px';
+      line.style.width = lineLength + 'px'; line.style.transform = `rotate(${-targetAngle}deg)`;
+      line.style.transformOrigin = 'left center'; line.style.display = 'block';
+    });
+  }
+
+  updateArmLine(side, shoulder, wrist) {
+    const line = this.armLines[side]; if (!line) return;
+    const dx = wrist.x - shoulder.x, dy = wrist.y - shoulder.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    line.style.left = shoulder.x + 'px'; line.style.top = shoulder.y + 'px';
+    line.style.width = length + 'px'; line.style.transform = `rotate(${angle}deg)`;
+    line.style.display = 'block';
+  }
+
+  checkExerciseProgress() {
+    if (!this.exerciseActive) return;
+    ['left', 'right'].forEach(side => {
+      const arm = this.arms[side], progressRing = this.progressRings[side], timerEl = this.onScreenTimers[side];
+
+      if (!arm) {
+        this.inTargetZone[side] = false; this.holdStartTime[side] = null; this.currentHoldTime[side] = 0;
+        if (progressRing) progressRing.svg.style.display = 'none';
+        if (timerEl) timerEl.style.display = 'none';
+        return;
+      }
+      
+      const targetAngle = this.targetAngles[side], tolerance = this.tolerances[side];
+      const diff = Math.abs(arm.angle - targetAngle), angleDiff = Math.min(diff, 360 - diff);
+      const inZone = angleDiff <= tolerance;
+      this.inTargetZone[side] = inZone;
+
+      if (inZone) {
+        if (!this.holdStartTime[side]) this.holdStartTime[side] = Date.now();
+        this.currentHoldTime[side] = (Date.now() - this.holdStartTime[side]) / 1000;
+        
+        const shoulderPos = this.shoulders[side];
+        if (shoulderPos) {
+          if (progressRing) {
+            progressRing.svg.style.left = shoulderPos.x + 'px'; progressRing.svg.style.top = (shoulderPos.y) + 'px';
+            progressRing.svg.style.display = 'block';
+            const progress = Math.min(this.currentHoldTime[side] / this.holdTimes[side], 1);
+            const circumference = 2 * Math.PI * 25;
+            progressRing.circle.style.strokeDasharray = `${progress * circumference} ${circumference}`;
+            progressRing.circle.style.stroke = progress >= 1 ? '#2ed573' : '#ffa502';
+          }
+          if(timerEl) {
+            timerEl.style.left = shoulderPos.x + 'px'; timerEl.style.top = shoulderPos.y - 45 + 'px';
+            timerEl.textContent = `${this.currentHoldTime[side].toFixed(1)}s`;
+            timerEl.style.display = 'block';
+          }
+        }
+        
+        if (this.armLines[side]) this.armLines[side].style.background = 'linear-gradient(90deg, #2ed573, #20bf6b)';
+        
+        if (this.currentHoldTime[side] >= this.holdTimes[side]) this.completeExercise(side);
+        
+      } else {
+        this.holdStartTime[side] = null; this.currentHoldTime[side] = 0;
+        if (progressRing) progressRing.svg.style.display = 'none';
+        if (timerEl) timerEl.style.display = 'none';
+        if (this.armLines[side]) {
+          const originalColor = side === 'left' ? 'linear-gradient(90deg, #4ecdc4, #44a08d)' : 'linear-gradient(90deg, #ffd93d, #ff9f43)';
+          this.armLines[side].style.background = originalColor;
+        }
+      }
+    });
+
+    const timerText = ['left', 'right'].map(side => {
+        const sideLabel = side.charAt(0).toUpperCase();
+        return `${sideLabel}: ${this.currentHoldTime[side].toFixed(1)}s`;
+    }).join(' | ');
+    document.getElementById('holdTimer').textContent = timerText || '0.0s';
+
+
+    const angleInfo = ['left', 'right'].map(side => {
+      const arm = this.arms[side], target = this.targetAngles[side];
+      const sideLabel = side.charAt(0).toUpperCase();
+      if (arm) return `${sideLabel}: ${Math.round(arm.angle)}°/${target}° ${this.inTargetZone[side] ? '✓' : '✗'}`;
+      return `${sideLabel}: --/${target}°`;
+    }).join(' | ');
+    document.getElementById('angleDisplay').textContent = angleInfo;
+  }
+
+  completeExercise(side) {
+    this.score += 100; this.completed++;
+    this.showFullScreenBlast();
+
+    if (this.score > this.highScore) {
+      this.highScore = this.score;
+      localStorage.setItem("shoulderExerciseHighScore", this.highScore);
+    }
+
+    if (this.completed % 5 === 0) {
+      this.level++;
+      this.showSuccess(`🎉 Level ${this.level}! Great work! 🎉`);
+    } else {
+      const sideName = side.charAt(0).toUpperCase() + side.slice(1);
+      this.showSuccess(`✅ ${sideName} Arm Complete! +100`);
+    }
+
+    this.holdStartTime[side] = null; this.currentHoldTime[side] = 0;
+    if (this.progressRings[side]) this.progressRings[side].svg.style.display = 'none';
+    if (this.onScreenTimers[side]) this.onScreenTimers[side].style.display = 'none';
+
+    this.updateUI();
+  }
+  
+  showFullScreenBlast() {
+    if (this.celebrationSound) {
+        this.celebrationSound.currentTime = 0;
+        this.celebrationSound.play();
+    }
+      
+    for (let i = 0; i < 70; i++) {
+        const emojiEl = document.createElement('div');
+        emojiEl.className = 'emoji-blast';
+        emojiEl.textContent = this.celebrationEmojis[Math.floor(Math.random() * this.celebrationEmojis.length)];
+        document.body.appendChild(emojiEl);
+
+        const endX = (Math.random() - 0.5) * (window.innerWidth * 1.5);
+        const endY = (Math.random() - 0.5) * (window.innerHeight * 1.5);
+        const rotation = (Math.random() - 0.5) * 720;
+        const scale = Math.random() * 1.5 + 0.5;
+
+        // Use a short timeout to ensure the initial state is rendered before transitioning
+        setTimeout(() => {
+            emojiEl.style.transform = `translate(-50%, -50%) translate(${endX}px, ${endY}px) rotate(${rotation}deg) scale(${scale})`;
+            emojiEl.style.opacity = '0';
+        }, 20);
+
+        setTimeout(() => {
+            emojiEl.remove();
+        }, 4500); // Remove after the transition
+    }
+  }
+
+  showSuccess(text) {
+    const el = document.createElement('div');
+    el.className = 'success-message';
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 4500);
+  }
+
+  hideVisualElements() {
+    ['left', 'right'].forEach(side => {
+      if (this.targetLines[side]) this.targetLines[side].style.display = 'none';
+      if (this.armLines[side]) this.armLines[side].style.display = 'none';
+      if (this.shoulderPoints[side]) this.shoulderPoints[side].style.display = 'none';
+      if (this.progressRings[side]) this.progressRings[side].svg.style.display = 'none';
+      if (this.onScreenTimers[side]) this.onScreenTimers[side].style.display = 'none';
+    });
+  }
+
+  updateUI() {
+    document.getElementById('score').textContent = this.score;
+    document.getElementById('level').textContent = this.level;
+    document.getElementById('completed').textContent = this.completed;
+    document.getElementById('highScore').textContent = this.highScore;
+  }
+
+  calibratePose() {
+    if (!this.currentPose) alert('Please stand in front of the camera first');
+    else this.showSuccess('📐 Pose calibrated! Stand naturally and begin exercises.');
+  }
+
+  resetGame() {
+    this.score = 0; this.level = 1; this.completed = 0;
+    this.holdStartTime = { left: null, right: null }; this.currentHoldTime = { left: 0, right: 0 };
+    this.inTargetZone = { left: false, right: false };
+    this.updateUI();
+    ['left', 'right'].forEach(side => {
+      if (this.progressRings[side]) {
+        this.progressRings[side].svg.style.display = 'none';
+        this.progressRings[side].circle.style.strokeDasharray = '0 100';
+      }
+      if (this.onScreenTimers[side]) this.onScreenTimers[side].style.display = 'none';
+    });
+    document.getElementById('holdTimer').textContent = 'L: 0.0s | R: 0.0s'; 
+    document.getElementById('angleDisplay').textContent = '';
+  }
+
+  loop() { if (this.gameStarted) requestAnimationFrame(() => this.loop()); }
+
+  stopAll() {
+    if (this.cameraHelper) this.cameraHelper.stop();
+    if (this.pose) this.pose.close();
+    if (this.video && this.video.srcObject) this.video.srcObject.getTracks().forEach(t => t.stop());
+    this.video.srcObject = null;
+  }
+}
+
+let game = new ShoulderExerciseGame();
+function startGame() { if (!game) game = new ShoulderExerciseGame(); game.startGame(); }
+function resetGame() { if (game) game.resetGame(); }
+function calibratePose() { if (game) game.calibratePose(); }
+window.addEventListener('beforeunload', () => { if (game) game.stopAll(); });
+</script>
+</body>
+</html>

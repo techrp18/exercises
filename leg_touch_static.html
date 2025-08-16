@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Foot Touch Repetitions (Fixed Lines)</title>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; overflow:hidden; background:#1a1a1a; }
+
+  #video {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh; object-fit:cover;
+    transform: scaleX(-1); /* mirror */
+    z-index:0;
+  }
+  
+  #gameCanvas {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh;
+    z-index: 10;
+  }
+
+  #ui {
+    position:absolute; left:20px; top:20px; z-index:20;
+    background: rgba(0,0,0,0.75); color:#fff; padding:14px; border-radius:12px;
+    width:300px; font-size:15px;
+  }
+  .ui-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .ui-row:last-child { margin-bottom: 0; }
+  .ui-row label { font-weight: 700; }
+  .ui-row input[type="number"] {
+    background: #333; color: #fff; border: 1px solid #555; border-radius: 5px; padding: 4px;
+    width: 60px;
+  }
+
+  #controls {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:18px; z-index:20; display:flex; gap:10px;
+  }
+  button {
+    background: linear-gradient(45deg,#5f27cd,#9d4edd); color:#fff; border:0; padding:10px 16px; border-radius:20px;
+    cursor:pointer; font-weight:700; box-shadow:0 6px 18px rgba(0,0,0,0.18);
+  }
+  button:hover { transform: translateY(-3px); }
+  button:disabled { background: #555; cursor: not-allowed; transform: none; }
+
+  #status {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:20;
+    color:#fff; text-align:center; background: rgba(0,0,0,0.7); padding:18px; border-radius:12px; max-width:640px;
+  }
+
+  .point-popup {
+    position:absolute; z-index:30;
+    color: #feca57;
+    font-weight:800; font-size: 28px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+    animation: fadeUpAndOut 1.2s ease-out forwards;
+  }
+
+  @keyframes fadeUpAndOut {
+    from { transform: translateY(0) scale(1); opacity: 1; }
+    to { transform: translateY(-70px) scale(1.3); opacity: 0; }
+  }
+  
+  /* Celebration Styles */
+  .celebration-message {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:100;
+    background: linear-gradient(45deg, #9d4edd, #5f27cd); color:#fff;
+    padding: 25px 35px; border-radius:20px; font-weight:700; font-size: 2.8em;
+    animation: celebrationPop 3s ease-in-out forwards;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  }
+  @keyframes celebrationPop {
+    0% { transform:translate(-50%,-50%) scale(0); opacity:0; }
+    10% { transform:translate(-50%,-50%) scale(1.1); opacity:1; }
+    85% { transform:translate(-50%,-50%) scale(1.0); opacity:1; }
+    100% { transform:translate(-50%,-50%) scale(0.9); opacity:0; }
+  }
+  .confetti {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    opacity: 0;
+    z-index: 99;
+    animation: confetti-fall 2.5s ease-out forwards;
+  }
+  @keyframes confetti-fall {
+    0% { transform: translateY(-100px) rotateZ(0deg); opacity: 1; }
+    100% { transform: translateY(300px) rotateZ(360deg); opacity: 0; }
+  }
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <audio id="backgroundMusic" src="musicbg.mp3" loop preload="auto"></audio>
+  <audio id="celebrationSound" src="audio.mp3" preload="auto"></audio>
+
+  <div id="ui">
+    <div class="ui-row">
+        <label>🏆 Reps:</label>
+        <span id="repCount">0 / 10</span>
+    </div>
+    <hr style="border-color: #444; margin: 10px 0;">
+    <div class="ui-row">
+        <label for="targetReps">🎯 Target Reps:</label>
+        <input type="number" id="targetReps" value="10" min="1">
+    </div>
+    <hr style="border-color: #444; margin: 10px 0;">
+    <div class="ui-row">
+        <label>🧍 Pose Status:</label>
+        <span id="poseStatus">Not Detected</span>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="cameraBtn" onclick="game.initializeCamera()">📷 Activate Camera</button>
+    <button id="startBtn" onclick="game.startSet()" disabled>💪 Start Set</button>
+  </div>
+
+  <div id="status">
+    <h2>🦶 Foot Touch Repetitions</h2>
+    <p>Activate your camera, set your target reps, and press "Start Set". Lean to touch the fixed lines with your feet to complete your reps!</p>
+  </div>
+
+<script>
+class FootTouchGame {
+  constructor() {
+    this.video = document.getElementById('video');
+    this.canvas = document.getElementById('gameCanvas');
+    this.ctx = this.canvas.getContext('2d');
+
+    this.repCountEl = document.getElementById('repCount');
+    this.targetRepsInput = document.getElementById('targetReps');
+    this.cameraBtn = document.getElementById('cameraBtn');
+    this.startBtn = document.getElementById('startBtn');
+    
+    // Audio elements
+    this.backgroundMusic = document.getElementById('backgroundMusic');
+    this.celebrationSound = document.getElementById('celebrationSound');
+
+    this.cameraActive = false;
+    this.setInProgress = false;
+    this.targetReps = 10;
+    this.currentReps = 0;
+    
+    this.leftTouchState = 'clear';
+    this.rightTouchState = 'clear';
+    
+    this.leftFoot = { x: 0, y: 0, detected: false };
+    this.rightFoot = { x: 0, y: 0, detected: false };
+
+    this.collisionThreshold = 30;
+    this.leftLine = { x: 0 };
+    this.rightLine = { x: 0 };
+    this.confettiColors = ['#9d4edd', '#feca57', '#5f27cd', '#ffffff'];
+    
+    this.addEventListeners();
+    window.addEventListener('resize', this.resizeCanvas.bind(this));
+    this.resizeCanvas();
+  }
+
+  addEventListeners() {
+    this.targetRepsInput.addEventListener('change', () => {
+        this.targetReps = parseInt(this.targetRepsInput.value, 10);
+        this.updateUI();
+    });
+  }
+
+  setLinePositions() {
+    this.leftLine.x = this.canvas.width * 0.25;
+    this.rightLine.x = this.canvas.width * 0.75;
+  }
+
+  resizeCanvas() {
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+    this.setLinePositions();
+  }
+
+  async initializeCamera() {
+    if (this.cameraActive) return;
+    try {
+      document.getElementById('status').style.display = 'none';
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      this.video.srcObject = stream;
+      await new Promise(resolve => { this.video.onloadeddata = () => resolve(); });
+
+      const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+      pose.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      pose.onResults(this.onPoseResults.bind(this));
+
+      const camera = new Camera(this.video, {
+        onFrame: async () => await pose.send({image: this.video}),
+        width: 1280,
+        height: 720
+      });
+      camera.start();
+
+      if (this.backgroundMusic) {
+          this.backgroundMusic.play().catch(e => console.warn("Background music failed to play:", e));
+      }
+
+      this.cameraActive = true;
+      this.cameraBtn.textContent = '✅ Camera Active';
+      this.cameraBtn.disabled = true;
+      this.startBtn.disabled = false;
+
+      this.gameLoop();
+
+    } catch (err) {
+      console.error('Camera initialization error', err);
+      alert('Could not start camera — please allow permissions and try again.');
+    }
+  }
+
+  startSet() {
+    if (!this.cameraActive || this.setInProgress) return;
+    this.setInProgress = true;
+    this.currentReps = 0;
+    this.targetReps = parseInt(this.targetRepsInput.value, 10);
+    
+    this.leftTouchState = 'clear';
+    this.rightTouchState = 'clear';
+    
+    this.startBtn.textContent = "Set in Progress...";
+    this.startBtn.disabled = true;
+    this.targetRepsInput.disabled = true;
+
+    this.updateUI();
+  }
+
+  onPoseResults(results) {
+    if (results.poseLandmarks) {
+      document.getElementById('poseStatus').textContent = 'Detected';
+      
+      const lm_left_foot = results.poseLandmarks[31]; // Left Foot Index
+      const lm_right_foot = results.poseLandmarks[32]; // Right Foot Index
+
+      this.leftFoot = {
+          x: (1 - lm_left_foot.x) * this.canvas.width,
+          y: lm_left_foot.y * this.canvas.height,
+          detected: lm_left_foot.visibility > 0.5
+      };
+
+      this.rightFoot = {
+          x: (1 - lm_right_foot.x) * this.canvas.width,
+          y: lm_right_foot.y * this.canvas.height,
+          detected: lm_right_foot.visibility > 0.5
+      };
+    } else {
+      document.getElementById('poseStatus').textContent = 'Not Detected';
+      this.leftFoot.detected = false;
+      this.rightFoot.detected = false;
+    }
+  }
+
+  updateGameLogic() {
+    if (!this.setInProgress) return;
+
+    const isTouchingLeft = this.leftFoot.detected && Math.abs(this.leftFoot.x - this.leftLine.x) < this.collisionThreshold;
+    const isTouchingRight = this.rightFoot.detected && Math.abs(this.rightFoot.x - this.rightLine.x) < this.collisionThreshold;
+
+    if (isTouchingLeft) {
+      if (this.leftTouchState === 'clear') {
+        this.leftTouchState = 'touching';
+        this.handleRepetition('left');
+      }
+    } else {
+      this.leftTouchState = 'clear';
+    }
+
+    if (isTouchingRight) {
+      if (this.rightTouchState === 'clear') {
+        this.rightTouchState = 'touching';
+        this.handleRepetition('right');
+      }
+    } else {
+      this.rightTouchState = 'clear';
+    }
+  }
+
+  handleRepetition(side) {
+    if (!this.setInProgress) return;
+
+    this.currentReps++;
+    this.updateUI();
+
+    const xPos = side === 'left' ? this.leftLine.x : this.rightFoot.x;
+    const yPos = side === 'left' ? this.leftFoot.y : this.rightFoot.y;
+    this.showPointsPopup("+1", xPos, yPos);
+
+    if (this.currentReps >= this.targetReps) {
+        this.completeSet();
+    }
+  }
+
+  completeSet() {
+    this.showCelebration();
+    this.setInProgress = false;
+
+    this.startBtn.textContent = "💪 Start New Set";
+    this.startBtn.disabled = false;
+    this.targetRepsInput.disabled = false;
+  }
+  
+  showPointsPopup(text, x, y) {
+    const popup = document.createElement('div');
+    popup.className = 'point-popup';
+    popup.textContent = text;
+    popup.style.left = `${x}px`;
+    popup.style.top = `${y}px`;
+    document.body.appendChild(popup);
+    setTimeout(() => popup.remove(), 1100);
+  }
+
+  showCelebration() {
+      if (this.celebrationSound) {
+          this.celebrationSound.currentTime = 0;
+          this.celebrationSound.play();
+      }
+      
+      const el = document.createElement('div');
+      el.className = 'celebration-message';
+      el.textContent = `🎉 Set Complete! 🎉`;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 2900);
+
+      // Create confetti
+      for (let i = 0; i < 40; i++) {
+          const confetti = document.createElement('div');
+          confetti.className = 'confetti';
+          const startX = (Math.random() - 0.5) * window.innerWidth * 0.7;
+          const startY = (Math.random() - 0.5) * window.innerHeight * 0.7;
+          confetti.style.left = `calc(50% + ${startX}px)`;
+          confetti.style.top = `calc(50% + ${startY}px)`;
+          confetti.style.backgroundColor = this.confettiColors[Math.floor(Math.random() * this.confettiColors.length)];
+          confetti.style.animationDelay = `${Math.random() * 0.2}s`;
+          confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+          document.body.appendChild(confetti);
+          setTimeout(() => confetti.remove(), 2500);
+      }
+  }
+
+  updateUI() {
+    this.repCountEl.textContent = `${this.currentReps} / ${this.targetReps}`;
+  }
+
+  draw() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    this.ctx.lineWidth = 10;
+    this.ctx.lineCap = 'round';
+    this.ctx.strokeStyle = 'rgba(157, 78, 221, 0.9)';
+    
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.leftLine.x, 0);
+    this.ctx.lineTo(this.leftLine.x, this.canvas.height);
+    this.ctx.stroke();
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.rightLine.x, 0);
+    this.ctx.lineTo(this.rightLine.x, this.canvas.height);
+    this.ctx.stroke();
+
+    const footLineHeight = 100;
+    this.ctx.lineWidth = 8;
+    this.ctx.lineCap = 'round';
+
+    if (this.leftFoot.detected) {
+        this.ctx.strokeStyle = (this.leftTouchState === 'touching') ? "rgba(0, 255, 0, 1)" : "rgba(254, 202, 87, 0.8)";
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.leftFoot.x, this.leftFoot.y - footLineHeight / 2);
+        this.ctx.lineTo(this.leftFoot.x, this.leftFoot.y + footLineHeight / 2);
+        this.ctx.stroke();
+    }
+    if (this.rightFoot.detected) {
+        this.ctx.strokeStyle = (this.rightTouchState === 'touching') ? "rgba(0, 255, 0, 1)" : "rgba(255, 107, 107, 0.8)";
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.rightFoot.x, this.rightFoot.y - footLineHeight / 2);
+        this.ctx.lineTo(this.rightFoot.x, this.rightFoot.y + footLineHeight / 2);
+        this.ctx.stroke();
+    }
+  }
+  
+  gameLoop() {
+    this.updateGameLogic();
+    this.draw();
+    requestAnimationFrame(this.gameLoop.bind(this));
+  }
+}
+
+const game = new FootTouchGame();
+</script>
+</body>
+</html>

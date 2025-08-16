@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Shoulder Touch - Leaning Game</title>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; overflow:hidden; background:#1a1a1a; }
+
+  #video {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh; object-fit:cover;
+    transform: scaleX(-1); /* mirror */
+    z-index:0;
+  }
+  
+  #gameCanvas {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh;
+    z-index: 10;
+  }
+
+  #ui {
+    position:absolute; left:20px; top:20px; z-index:20;
+    background: rgba(0,0,0,0.75); color:#fff; padding:14px; border-radius:12px;
+    min-width:260px; font-size:15px;
+  }
+  #controls {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:18px; z-index:20; display:flex; gap:10px;
+  }
+  button {
+    background: linear-gradient(45deg,#5f27cd,#9d4edd); color:#fff; border:0; padding:10px 16px; border-radius:20px;
+    cursor:pointer; font-weight:700; box-shadow:0 6px 18px rgba(0,0,0,0.18);
+  }
+  button:hover { transform: translateY(-3px); }
+
+  #status {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:20;
+    color:#fff; text-align:center; background: rgba(0,0,0,0.7); padding:18px; border-radius:12px; max-width:640px;
+  }
+
+  /* Original score pop-up at point of collision */
+  .point-popup {
+    position:absolute; z-index:30;
+    color: #feca57;
+    font-weight:800; font-size: 28px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+    animation: fadeUpAndOut 1.2s ease-out forwards;
+  }
+
+  @keyframes fadeUpAndOut {
+    from { transform: translateY(0) scale(1); opacity: 1; }
+    to { transform: translateY(-70px) scale(1.3); opacity: 0; }
+  }
+
+  /* New central celebration box, styled like the first game */
+  .success-message {
+    position:absolute; left:50%; top:46%; transform:translate(-50%,-50%); z-index:40;
+    background: linear-gradient(45deg,#5f27cd,#9d4edd); color:#fff;
+    padding: 22px 30px; border-radius:16px; font-weight:700; font-size: 2.5em;
+    animation: successPop 3.8s ease-in-out forwards;
+  }
+  @keyframes successPop {
+    0% { transform:translate(-50%,-50%) scale(0); opacity:0; }
+    10% { transform:translate(-50%,-50%) scale(1.15); opacity:1; }
+    90% { transform:translate(-50%,-50%) scale(1.05); opacity:1; }
+    100% { transform:translate(-50%,-50%) scale(1); opacity:0; }
+  }
+
+  /* Star effect for the central celebration box */
+  .star-effect {
+    position: absolute; top: 50%; left: 50%; width: 7px; height: 7px;
+    background: #fff; border-radius: 50%;
+    animation: star-burst 1.5s ease-out forwards;
+    transform-origin: center;
+  }
+  @keyframes star-burst {
+    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(0) rotate(360deg); opacity: 0; }
+  }
+
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="gameCanvas"></canvas>
+  
+  <audio id="backgroundMusic" src="musicbg.mp3" loop preload="auto"></audio>
+  <audio id="celebrationSound" src="audio.mp3" preload="auto"></audio>
+
+  <div id="ui">
+    <div><strong>🎯 Score:</strong> <span id="score">0</span></div>
+    <div><strong>🏆 High Score:</strong> <span id="highScore">0</span></div>
+    <div><strong>🧍 Pose Status:</strong> <span id="poseStatus">Not Detected</span></div>
+  </div>
+
+  <div id="controls">
+    <button id="startBtn" onclick="game.startGame()">🎮 Start Game</button>
+    <button id="resetBtn" onclick="game.resetGame()">🔄 Reset Game</button>
+  </div>
+
+  <div id="status">
+    <h2>🧍 Shoulder Touch Game</h2>
+    <p>Lean left and right to touch the vertical lines with your shoulders. Each touch scores points and moves the line further away!</p>
+  </div>
+
+<script>
+class ShoulderTouchGame {
+  constructor() {
+    this.video = document.getElementById('video');
+    this.canvas = document.getElementById('gameCanvas');
+    this.ctx = this.canvas.getContext('2d');
+
+    this.gameStarted = false;
+    this.score = 0;
+    this.highScore = localStorage.getItem('shoulderTouchHighScore') || 0;
+    document.getElementById('highScore').textContent = this.highScore;
+    
+    // Audio elements
+    this.backgroundMusic = document.getElementById('backgroundMusic');
+    this.celebrationSound = document.getElementById('celebrationSound');
+
+    // Pose tracking state
+    this.leftShoulder = { x: 0, y: 0, detected: false };
+    this.rightShoulder = { x: 0, y: 0, detected: false };
+
+    // Game elements state
+    this.initialLineDist = window.innerWidth / 5;
+    this.lineIncrease = 20; // How much the line moves out on touch
+    this.collisionThreshold = 25;
+
+    this.leftLine = { dist: this.initialLineDist, x: 0, active: true };
+    this.rightLine = { dist: this.initialLineDist, x: 0, active: true };
+    
+    window.addEventListener('resize', this.resizeCanvas.bind(this));
+  }
+
+  resizeCanvas() {
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+    this.initialLineDist = window.innerWidth / 5;
+    // Re-calculate line positions on resize
+    this.leftLine.x = this.canvas.width / 2 - this.leftLine.dist;
+    this.rightLine.x = this.canvas.width / 2 + this.rightLine.dist;
+  }
+
+  async startGame() {
+    if (this.gameStarted) return;
+    try {
+      document.getElementById('status').style.display = 'none';
+      this.resizeCanvas();
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      this.video.srcObject = stream;
+      await new Promise(resolve => { this.video.onloadeddata = () => resolve(); });
+
+      const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+      pose.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      pose.onResults(this.onPoseResults.bind(this));
+
+      const camera = new Camera(this.video, {
+        onFrame: async () => await pose.send({image: this.video}),
+        width: 1280,
+        height: 720
+      });
+      camera.start();
+
+      if (this.backgroundMusic) {
+          this.backgroundMusic.play().catch(e => console.warn("Background music failed to play:", e));
+      }
+
+      this.gameStarted = true;
+      document.getElementById('startBtn').textContent = '✅ Camera Active';
+      document.getElementById('startBtn').disabled = true;
+
+      this.gameLoop();
+
+    } catch (err) {
+      console.error('startGame error', err);
+      alert('Could not start camera — please allow permissions and try again.');
+    }
+  }
+
+  onPoseResults(results) {
+    if (results.poseLandmarks) {
+      document.getElementById('poseStatus').textContent = 'Detected';
+      const videoRect = this.video.getBoundingClientRect();
+      
+      const lm_left = results.poseLandmarks[11]; // Left Shoulder
+      const lm_right = results.poseLandmarks[12]; // Right Shoulder
+
+      // Convert to screen coords, mirroring X
+      this.leftShoulder = {
+          x: videoRect.left + (1 - lm_left.x) * videoRect.width,
+          y: videoRect.top + lm_left.y * videoRect.height,
+          detected: lm_left.visibility > 0.5
+      };
+
+      this.rightShoulder = {
+          x: videoRect.left + (1 - lm_right.x) * videoRect.width,
+          y: videoRect.top + lm_right.y * videoRect.height,
+          detected: lm_right.visibility > 0.5
+      };
+    } else {
+      document.getElementById('poseStatus').textContent = 'Not Detected';
+      this.leftShoulder.detected = false;
+      this.rightShoulder.detected = false;
+    }
+  }
+
+  updateGameLogic() {
+    if (!this.gameStarted) return;
+    const centerX = this.canvas.width / 2;
+    this.leftLine.x = centerX - this.leftLine.dist;
+    this.rightLine.x = centerX + this.rightLine.dist;
+
+    // Check for left shoulder collision
+    if (this.leftShoulder.detected && this.leftLine.active && Math.abs(this.leftShoulder.x - this.leftLine.x) < this.collisionThreshold) {
+        this.handleCollision('left');
+    }
+
+    // Check for right shoulder collision
+    if (this.rightShoulder.detected && this.rightLine.active && Math.abs(this.rightShoulder.x - this.rightLine.x) < this.collisionThreshold) {
+        this.handleCollision('right');
+    }
+  }
+
+  handleCollision(side) {
+    this.addScore(10);
+    this.showSuccess('⭐ +10 ⭐'); // Central celebration
+    
+    if (side === 'left') {
+        this.leftLine.active = false;
+        this.leftLine.dist += this.lineIncrease;
+        this.showPointsPopup(10, this.leftLine.x, this.leftShoulder.y); // Original local popup
+        setTimeout(() => { this.leftLine.active = true; }, 1000); // 1 second cooldown
+    } else {
+        this.rightLine.active = false;
+        this.rightLine.dist += this.lineIncrease;
+        this.showPointsPopup(10, this.rightLine.x, this.rightShoulder.y); // Original local popup
+        setTimeout(() => { this.rightLine.active = true; }, 1000); // 1 second cooldown
+    }
+  }
+
+  addScore(points) {
+    this.score += points;
+    if (this.score > this.highScore) {
+        this.highScore = this.score;
+        localStorage.setItem('shoulderTouchHighScore', this.highScore);
+    }
+    this.updateUI();
+  }
+  
+  // Original function for the local score pop-up
+  showPointsPopup(points, x, y) {
+    const popup = document.createElement('div');
+    popup.className = 'point-popup';
+    popup.textContent = `+${points}`;
+    popup.style.left = `${x}px`;
+    popup.style.top = `${y}px`;
+    document.body.appendChild(popup);
+    setTimeout(() => popup.remove(), 1100);
+  }
+
+  // New function for the central celebration box
+  showSuccess(text) {
+    if (this.celebrationSound) {
+        this.celebrationSound.currentTime = 0;
+        this.celebrationSound.play();
+    }
+
+    const el = document.createElement('div');
+    el.className = 'success-message';
+    el.textContent = text;
+    document.body.appendChild(el);
+
+    // Add starburst effect
+    for (let i = 0; i < 20; i++) {
+        const star = document.createElement('div');
+        star.className = 'star-effect';
+        const angle = Math.random() * 360;
+        const distance = 100 + Math.random() * 100; // Stars burst outwards
+        star.style.transform = `rotate(${angle}deg) translateX(${distance}px) scale(1)`;
+        star.style.animationDelay = `${Math.random() * 0.3}s`;
+        el.appendChild(star);
+    }
+
+    setTimeout(() => el.remove(), 3700); // Remove after animation
+  }
+
+
+  updateUI() {
+    document.getElementById('score').textContent = this.score;
+    document.getElementById('highScore').textContent = this.highScore;
+  }
+
+  draw() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // Draw target lines
+    this.ctx.lineWidth = 10;
+    this.ctx.lineCap = 'round';
+    // Left Line
+    this.ctx.strokeStyle = this.leftLine.active ? 'rgba(157, 78, 221, 0.9)' : 'rgba(255, 82, 82, 0.8)';
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.leftLine.x, 0);
+    this.ctx.lineTo(this.leftLine.x, this.canvas.height);
+    this.ctx.stroke();
+    // Right Line
+    this.ctx.strokeStyle = this.rightLine.active ? 'rgba(157, 78, 221, 0.9)' : 'rgba(255, 82, 82, 0.8)';
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.rightLine.x, 0);
+    this.ctx.lineTo(this.rightLine.x, this.canvas.height);
+    this.ctx.stroke();
+
+    // Draw shoulder cursors as vertical lines
+    const shoulderLineHeight = 100; // Height of the vertical line
+    this.ctx.lineWidth = 8;        // Thickness of the line
+    this.ctx.lineCap = 'round';
+
+    if (this.leftShoulder.detected) {
+        this.ctx.strokeStyle = "rgba(254, 202, 87, 0.8)"; // Yellow for left
+        this.ctx.beginPath();
+        // Draw line centered on the shoulder's y-position
+        this.ctx.moveTo(this.leftShoulder.x, this.leftShoulder.y - shoulderLineHeight / 2);
+        this.ctx.lineTo(this.leftShoulder.x, this.leftShoulder.y + shoulderLineHeight / 2);
+        this.ctx.stroke();
+    }
+    if (this.rightShoulder.detected) {
+        this.ctx.strokeStyle = "rgba(255, 107, 107, 0.8)"; // Red for right
+        this.ctx.beginPath();
+        // Draw line centered on the shoulder's y-position
+        this.ctx.moveTo(this.rightShoulder.x, this.rightShoulder.y - shoulderLineHeight / 2);
+        this.ctx.lineTo(this.rightShoulder.x, this.rightShoulder.y + shoulderLineHeight / 2);
+        this.ctx.stroke();
+    }
+  }
+  
+  resetGame() {
+    if (!this.gameStarted) {
+        alert("Start the game first before resetting!");
+        return;
+    }
+    this.score = 0;
+    this.leftLine.dist = this.initialLineDist;
+    this.rightLine.dist = this.initialLineDist;
+    this.leftLine.active = true;
+    this.rightLine.active = true;
+    this.updateUI();
+  }
+
+  gameLoop() {
+    this.updateGameLogic();
+    this.draw();
+    if(this.gameStarted) {
+        requestAnimationFrame(this.gameLoop.bind(this));
+    }
+  }
+}
+
+const game = new ShoulderTouchGame();
+</script>
+</body>
+</html>```

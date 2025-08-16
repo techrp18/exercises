@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Full Screen Two-Hand Motion Game (with CSV, JSON, Video)</title>
+
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; overflow:hidden; background:#000; color:#fff; }
+
+  /* Full-screen camera */
+  #video {
+    position: absolute; top:0; left:0;
+    width:100vw; height:100vh; object-fit:cover;
+    transform: scaleX(-1); /* mirror */
+    z-index:0;
+  }
+
+  /* UI */
+  #ui {
+    position:absolute; left:20px; top:20px; z-index:20;
+    background: rgba(0,0,0,0.72); color:#fff; padding:14px; border-radius:12px;
+    min-width:300px; font-size:15px;
+  }
+  #controls {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:18px; z-index:20; display:flex; gap:10px;
+  }
+  button {
+    background: linear-gradient(45deg,#667eea,#764ba2); color:#fff; border:0; padding:10px 16px; border-radius:20px;
+    cursor:pointer; font-weight:700; box-shadow:0 6px 18px rgba(0,0,0,0.18);
+  }
+  button:hover { transform: translateY(-3px); }
+  button.recording { background: linear-gradient(45deg,#ff6b6b,#ee5a52); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 4px 12px rgba(255,107,107,0.25);}50%{box-shadow:0 6px 20px rgba(255,107,107,0.45);}100%{box-shadow:0 4px 12px rgba(255,107,107,0.25);} }
+
+  /* status center */
+  #status {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:20;
+    color:#fff; text-align:center; background: rgba(0,0,0,0.6); padding:18px; border-radius:12px; max-width:640px;
+  }
+
+  /* cursors */
+  .hand-cursor {
+    position:absolute; width:46px; height:46px; border-radius:50%; border:4px solid #fff;
+    pointer-events:none; z-index:18; transform:translate(-50%,-50%); transition: transform .08s linear, box-shadow .12s linear;
+  }
+  .left-hand { background: radial-gradient(circle,#ff6b6b,#ff4757); box-shadow:0 0 22px rgba(255,107,107,0.75); }
+  .right-hand { background: radial-gradient(circle,#54a0ff,#2e86de); box-shadow:0 0 22px rgba(84,160,255,0.75); }
+  .hand-cursor.grabbing { transform: translate(-50%,-50%) scale(1.22); }
+
+  /* balls */
+  .ball {
+    position:absolute; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800;
+    text-shadow:1px 1px 3px rgba(0,0,0,0.4); z-index:15; transition: transform .18s cubic-bezier(.2,.8,.2,1), opacity .18s linear;
+  }
+  .ball.spawning { animation: ballSpawn .55s ease; }
+  @keyframes ballSpawn {0%{transform:scale(0);opacity:0}60%{transform:scale(1.12);opacity:.9}100%{transform:scale(1);opacity:1}}
+  .ball.grabbed { animation: collected .7s ease forwards; }
+  @keyframes collected {0%{transform:scale(1);opacity:1}50%{transform:scale(1.5);opacity:.85}100%{transform:scale(.3);opacity:0}}
+
+  .success-message {
+    position:absolute; left:50%; top:46%; transform:translate(-50%,-50%); z-index:30;
+    background: rgba(46,213,115,0.95); color:#fff;
+    padding: 40px 56px; /* Doubled padding */
+    border-radius: 24px; /* Increased border radius */
+    font-weight: 700;
+    font-size: 3em; /* Doubled font size */
+    animation: successPop 5s ease-in-out forwards;
+  }
+  @keyframes successPop {
+    0% { transform:translate(-50%,-50%) scale(0); opacity:0; }
+    10% { transform:translate(-50%,-50%) scale(1.1); opacity:1; }
+    85% { transform:translate(-50%,-50%) scale(1.05); opacity:1; }
+    100% { transform:translate(-50%,-50%) scale(1); opacity:0; }
+  }
+
+  /* Star effect for level up */
+  .star-effect {
+    position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; /* Slightly larger stars */
+    background: #fff; border-radius: 50%;
+    animation: star-burst 1.5s ease-out forwards;
+    transform-origin: center;
+  }
+  @keyframes star-burst {
+    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(0) rotate(360deg); opacity: 0; }
+  }
+
+  /* New Confetti Effect */
+  .confetti {
+    position: absolute;
+    width: 12px; /* Larger confetti */
+    height: 12px;
+    opacity: 0;
+    z-index: 999;
+    animation: confetti-fall 3s ease-out forwards;
+  }
+  @keyframes confetti-fall {
+    0% { transform: translateY(-150px) rotateZ(0deg); opacity: 1; }
+    100% { transform: translateY(300px) rotateZ(360deg); opacity: 0; }
+  }
+
+  /* small note */
+  #note { position:absolute; right:20px; top:20px; z-index:20; background:rgba(0,0,0,0.6); padding:10px;border-radius:10px; font-size:13px;}
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<!-- JSZip for bundling JSON+CSV+Video into single ZIP -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  
+  <!-- Audio Elements -->
+  <audio id="scoreSound" src="audio.mp3" preload="auto"></audio>
+  <audio id="backgroundMusic" src="musicbg.mp3" loop preload="auto"></audio>
+
+
+  <div id="ui">
+    <div><strong>🎯 Score:</strong> <span id="score">0</span></div>
+    <div><strong>⭐ Level:</strong> <span id="level">1</span></div>
+    <div><strong>🎈 Collected:</strong> <span id="collected">0</span></div>
+    <div><strong>🏆 High Score:</strong> <span id="highScore">0</span></div>
+    <div style="margin-top:8px;"><strong>👐 Hands:</strong> <span id="handStatus">Not Detected</span></div>
+    <div style="margin-top:8px;"><strong>📊 Recording:</strong> <span id="recordingStatus">Stopped</span></div>
+  </div>
+
+  <div id="controls">
+    <button id="startBtn" onclick="startGame()">🎮 Start Game</button>
+    <button id="recordBtn" onclick="toggleRecording()">📹 Start Recording</button>
+    <button id="downloadBtn" onclick="downloadData()">💾 Download Data</button>
+    <button id="resetBtn" onclick="resetGame()">🔄 Reset</button>
+  </div>
+
+  <div id="status">
+    <h2>🎯 Two-Hand Motion Game</h2>
+    <p>Click "Start Game" and allow camera access. Use both hands — Left cursor is red, Right cursor is blue.</p>
+  </div>
+
+
+<script>
+class MotionGame {
+  constructor(){
+    this.video = document.getElementById('video');
+    this.scoreSound = document.getElementById('scoreSound');
+    this.backgroundMusic = document.getElementById('backgroundMusic');
+
+    // gameplay state
+    this.gameStarted = false;
+    this.score = 0;
+    this.level = 1;
+    this.collected = 0;
+    this.currentBall = null;
+    this.ballColors = ['#ff6b6b','#4ecdc4','#45b7d1','#96ceb4','#ffeaa7','#dda0dd','#98d8c8','#f7dc6f','#a8e6cf','#ff8b94','#ffaaa5','#ff677d'];
+
+    // highscores
+    const stored = parseInt(localStorage.getItem("motionGameHighScore"));
+    this.highScore = (!isNaN(stored) && stored > 0) ? stored : 0;
+
+    // hand tracking state
+    this.smoothing = 0.22;
+    this.prevPositions = {};
+    this.lastRawForVel = {};
+    this.currentHands = {};
+    this.cursors = {};
+
+    // velocity/accel tracking
+    this.lastVelocity = {};
+    this.lastVelTime = {};
+
+    // recording (motion)
+    this.recording = false;
+    this.motionData = [];
+    this.recordStart = null;
+
+    // video recording
+    this.mediaRecorder = null;
+    this.videoChunks = [];
+    this.videoBlob = null;
+
+    // MediaPipe helpers
+    this.hands = null;
+    this.cameraHelper = null;
+
+    // cursors
+    this.createCursor('Left');
+    this.createCursor('Right');
+
+    // initial UI
+    this.updateUI();
+
+    // stop on unload
+    window.addEventListener('beforeunload', ()=> this.stopAll());
+  }
+
+  createCursor(type){
+    const el = document.createElement('div');
+    el.className = 'hand-cursor ' + (type === 'Left' ? 'left-hand' : 'right-hand');
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    this.cursors[type] = el;
+  }
+
+  async startGame(){
+    try {
+      document.getElementById('status').style.display = 'none';
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720, facingMode:'user' }, audio:false });
+      this.video.srcObject = stream;
+      await new Promise(resolve => { this.video.onloadeddata = () => resolve(); });
+
+      this.hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+      this.hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.6 });
+      this.hands.onResults(results => this.onHandResults(results));
+
+      this.cameraHelper = new Camera(this.video, {
+        onFrame: async () => { await this.hands.send({ image: this.video }); },
+        width: 1280, height: 720
+      });
+      this.cameraHelper.start();
+
+      this.gameStarted = true;
+      this.spawnBall();
+      this.loop();
+      
+      // Start background music
+      this.backgroundMusic.play().catch(e => console.warn("Background music failed to play:", e));
+
+      document.getElementById('startBtn').textContent = '✅ Camera Active';
+      document.getElementById('startBtn').disabled = true;
+    } catch (err) {
+      console.error('startGame error', err);
+      alert('Could not start camera — please allow permissions and try again.');
+    }
+  }
+
+  // Converts normalized MediaPipe coords to page coords inside video element
+  normalizedToVideoCoords(normX, normY){
+    const rect = this.video.getBoundingClientRect();
+    const mirroredX = 1 - normX; // mirror horizontally for natural movement
+    const x = rect.left + mirroredX * rect.width;
+    const y = rect.top + normY * rect.height;
+    return { x, y };
+  }
+
+  // Average landmarks for palm center (wrist and finger-bases)
+  landmarkAverage(landmarks){
+    const idxs = [0,5,9,13,17];
+    let ax = 0, ay = 0;
+    for (let i=0;i<idxs.length;i++){
+      const p = landmarks[idxs[i]];
+      ax += p.x; ay += p.y;
+    }
+    return { x: ax/idxs.length, y: ay/idxs.length };
+  }
+
+  onHandResults(results){
+    // reset currentHands for this frame
+    this.currentHands = {};
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0 && results.multiHandedness){
+      results.multiHandLandmarks.forEach((landmarks, idx) => {
+        const handedness = results.multiHandedness[idx].label; // "Left" or "Right"
+        const avg = this.landmarkAverage(landmarks);
+        const mapped = this.normalizedToVideoCoords(avg.x, avg.y);
+
+        // smoothing
+        const prev = this.prevPositions[handedness] || { x: mapped.x, y: mapped.y };
+        const smoothX = prev.x + this.smoothing * (mapped.x - prev.x);
+        const smoothY = prev.y + this.smoothing * (mapped.y - prev.y);
+
+        // compute dx/dy against last smoothed
+        const last = this.lastRawForVel[handedness] || { x: smoothX, y: smoothY };
+        const dx = smoothX - last.x, dy = smoothY - last.y;
+        const velocity = Math.sqrt(dx*dx + dy*dy);
+
+        const nowPerf = performance.now();
+        const prevVel = this.lastVelocity[handedness] || 0;
+        const dt = Math.max(1, nowPerf - (this.lastVelTime[handedness] || nowPerf));
+        const accel = (velocity - prevVel) / dt; // px per ms^2 approx
+        const angle = Math.atan2(dy, dx) * (180/Math.PI);
+
+        // update trackers
+        this.prevPositions[handedness] = { x: smoothX, y: smoothY };
+        this.lastRawForVel[handedness] = { x: smoothX, y: smoothY };
+        this.lastVelocity[handedness] = velocity;
+        this.lastVelTime[handedness] = nowPerf;
+
+        // show cursor
+        const cursor = this.cursors[handedness];
+        if (cursor){
+          cursor.style.display = 'block';
+          cursor.style.left = `${smoothX}px`;
+          cursor.style.top = `${smoothY}px`;
+          cursor.dataset.velocity = velocity.toFixed(2);
+          cursor.dataset.angle = angle.toFixed(1);
+          cursor.dataset.dx = dx.toFixed(2);
+          cursor.dataset.dy = dy.toFixed(2);
+          cursor.dataset.accel = accel.toFixed(4);
+        }
+
+        // store current hand
+        this.currentHands[handedness] = { x: smoothX, y: smoothY, v: velocity, a: angle, dx, dy, accel, detected: true };
+      });
+
+      // hide cursor for hands not seen this frame
+      ['Left','Right'].forEach(type => {
+        if (!this.currentHands[type] && this.cursors[type]) {
+          this.cursors[type].style.display = 'none';
+        }
+      });
+
+      // update handStatus UI
+      const found = Object.keys(this.currentHands);
+      if (found.length === 0) document.getElementById('handStatus').textContent = 'Not Detected';
+      else document.getElementById('handStatus').textContent = found.join(', ') + ' Detected';
+
+    } else {
+      // no hands: hide both cursors
+      ['Left','Right'].forEach(type => { if (this.cursors[type]) this.cursors[type].style.display = 'none'; });
+      document.getElementById('handStatus').textContent = 'Not Detected';
+    }
+
+    // interactions + record
+    this.checkBallGrab();
+    this.recordMotion();
+  }
+
+  // spawn a ball inside the video rect (so it appears in-camera)
+  spawnBall(){
+    if (this.currentBall) { this.currentBall.remove(); this.currentBall = null; }
+
+    const rect = this.video.getBoundingClientRect();
+    const areaLeft = rect.left;
+    const areaTop = rect.top;
+    const areaW = rect.width;
+    const areaH = rect.height;
+
+    const size = 48 + Math.random()*56; // 48..104
+    const color = this.ballColors[Math.floor(Math.random()*this.ballColors.length)];
+    const ballNumber = this.collected + 1;
+
+    const ball = document.createElement('div');
+    ball.className = 'ball spawning';
+    ball.style.width = `${size}px`;
+    ball.style.height = `${size}px`;
+    ball.style.background = `radial-gradient(circle at 30% 30%, ${color}, ${this.darkenColor(color,0.38)})`;
+    const left = areaLeft + Math.random() * Math.max(0, (areaW - size));
+    const top  = areaTop  + Math.random() * Math.max(0, (areaH - size));
+    ball.style.left = `${left}px`;
+    ball.style.top = `${top}px`;
+    ball.textContent = ballNumber;
+    ball.dataset.cx = left + size/2;
+    ball.dataset.cy = top + size/2;
+    ball.dataset.size = size;
+
+    document.body.appendChild(ball);
+    this.currentBall = ball;
+
+    setTimeout(()=>{ if (ball.classList) ball.classList.remove('spawning'); }, 520);
+  }
+
+  checkBallGrab(){
+    if (!this.currentBall) return;
+    const cx = parseFloat(this.currentBall.dataset.cx);
+    const cy = parseFloat(this.currentBall.dataset.cy);
+    const size = parseFloat(this.currentBall.dataset.size);
+
+    // check all currently detected hands
+    for (const type of ['Left','Right']){
+      const h = this.currentHands[type];
+      if (!h) continue;
+      const dx = h.x - cx, dy = h.y - cy;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < size/2 + 32){
+        // grabbed by this hand
+        this.grabBall(type);
+        return;
+      } else {
+        // add visual feedback if near
+        if (dist < size/2 + 48){
+          if (this.cursors[type]) this.cursors[type].classList.add('grabbing');
+        } else {
+          if (this.cursors[type]) this.cursors[type].classList.remove('grabbing');
+        }
+      }
+    }
+  }
+
+  grabBall(handType){
+    if (!this.currentBall) return;
+    const size = parseInt(this.currentBall.dataset.size);
+    this.score += Math.floor(size);
+    this.collected++;
+    this.scoreSound.currentTime = 0;
+    this.scoreSound.play();
+
+    // update high score
+    if (this.score > this.highScore) {
+      this.highScore = this.score;
+      localStorage.setItem("motionGameHighScore", this.highScore);
+    }
+
+    if (this.collected % 5 === 0){
+      this.level++;
+      this.showSuccess(`🎉 Level ${this.level}! 🎉`);
+    } else {
+      this.showSuccess(`+${Math.floor(size)} points!`);
+    }
+
+    this.currentBall.classList.add('grabbed');
+
+    setTimeout(()=>{
+      if (this.currentBall) { this.currentBall.remove(); this.currentBall = null; }
+      if (this.gameStarted) this.spawnBall();
+    }, 350);
+
+    this.updateUI();
+  }
+
+  showSuccess(text){
+    const el = document.createElement('div'); el.className = 'success-message'; el.textContent = text;
+    document.body.appendChild(el);
+
+    const isLevelUp = text.includes("Level");
+
+    // Add confetti for all success messages
+    const confettiCount = isLevelUp ? 80 : 40; // More for level up
+    for (let i = 0; i < confettiCount; i++) {
+        const confetti = document.createElement('div');
+        confetti.className = 'confetti';
+        const startX = (Math.random() - 0.5) * 800; // Wider spread
+        const startY = (Math.random() - 0.5) * 600 - 100; // Wider spread
+        confetti.style.left = `calc(50% + ${startX}px)`;
+        confetti.style.top = `calc(46% + ${startY}px)`;
+        confetti.style.backgroundColor = this.ballColors[Math.floor(Math.random() * this.ballColors.length)];
+        confetti.style.animationDelay = `${Math.random() * 0.5}s`;
+        confetti.style.transform = `rotate(${Math.random() * 360}deg)`;
+        document.body.appendChild(confetti);
+        setTimeout(() => confetti.remove(), 3500);
+    }
+
+    // Add star effect ONLY for level up
+    if (isLevelUp) {
+      for (let i = 0; i < 20; i++) { // More stars
+        const star = document.createElement('div');
+        star.className = 'star-effect';
+        const angle = Math.random() * 360;
+        const distance = 120 + Math.random() * 120; // Stars burst further out
+        star.style.transform = `rotate(${angle}deg) translateX(${distance}px) scale(1)`;
+        star.style.animationDelay = `${Math.random() * 0.3}s`;
+        el.appendChild(star);
+      }
+    }
+
+    setTimeout(()=> el.remove(), 4900);
+  }
+
+  updateUI(){
+    document.getElementById('score').textContent = this.score;
+    document.getElementById('level').textContent = this.level;
+    document.getElementById('collected').textContent = this.collected;
+    document.getElementById('highScore').textContent = this.highScore;
+  }
+
+  // recording: record both hands per frame, plus dx/dy/accel
+  recordMotion(){
+    if (!this.recording) return;
+
+    const now = Date.now();
+    if (!this.recordStart) this.recordStart = now;
+    const t = now - this.recordStart;
+
+    const handsRecord = {};
+    for (const type of ['Left','Right']){
+      if (this.currentHands[type]){
+        const h = this.currentHands[type];
+        handsRecord[type] = {
+          detected: true,
+          x: h.x,
+          y: h.y,
+          dx: h.dx,
+          dy: h.dy,
+          velocity: h.v,
+          acceleration: h.accel,
+          angle: h.a
+        };
+      } else {
+        handsRecord[type] = { detected: false };
+      }
+    }
+
+    const ballInfo = this.currentBall ? {
+      present: true, cx: parseFloat(this.currentBall.dataset.cx), cy: parseFloat(this.currentBall.dataset.cy),
+      size: parseFloat(this.currentBall.dataset.size)
+    } : { present: false };
+
+    this.motionData.push({
+      t, hands: handsRecord, score: this.score, level: this.level, ball: ballInfo
+    });
+  }
+
+  // CSV Export (Time(ms),Hand,Detected,X,Y,Dx,Dy,Velocity,Acceleration,Angle,Score,Level,BallPresent,BallX,BallY,BallSize,HighScore)
+  motionDataToCSV(){
+    let csv = "Time(ms),Hand,Detected,X,Y,Dx,Dy,Velocity,Acceleration,Angle,Score,Level,BallPresent,BallX,BallY,BallSize,HighScore\n";
+    this.motionData.forEach(frame => {
+      ['Left','Right'].forEach(hand => {
+        const h = frame.hands[hand] || { detected:false };
+        const present = frame.ball.present ? 'true' : 'false';
+        const row = [
+          frame.t,
+          hand,
+          h.detected ? 'true' : 'false',
+          h.detected ? (h.x.toFixed(2)) : '',
+          h.detected ? (h.y.toFixed(2)) : '',
+          h.detected ? (h.dx !== undefined ? h.dx.toFixed(2) : '') : '',
+          h.detected ? (h.dy !== undefined ? h.dy.toFixed(2) : '') : '',
+          h.detected ? (h.velocity !== undefined ? h.velocity.toFixed(3) : '') : '',
+          h.detected ? (h.acceleration !== undefined ? h.acceleration.toFixed(6) : '') : '',
+          h.detected ? (h.angle !== undefined ? h.angle.toFixed(1) : '') : '',
+          frame.score,
+          frame.level,
+          present,
+          frame.ball.present ? frame.ball.cx.toFixed(2) : '',
+          frame.ball.present ? frame.ball.cy.toFixed(2) : '',
+          frame.ball.present ? frame.ball.size.toFixed(2) : '',
+          this.highScore
+        ];
+        csv += row.join(",") + "\n";
+      });
+    });
+    return csv;
+  }
+
+  toggleRecording(){
+    if (!this.gameStarted){
+      alert('Start game first');
+      return;
+    }
+    const btn = document.getElementById('recordBtn');
+    if (!this.recording){
+      // start recording
+      this.recording = true;
+      this.motionData = [];
+      this.recordStart = null;
+      btn.textContent = '⏹️ Stop Recording';
+      btn.classList.add('recording');
+      document.getElementById('recordingStatus').textContent = '🔴 Recording';
+
+      // start video recorder
+      this.startVideoRecording();
+    } else {
+      // stop recording
+      this.recording = false;
+      btn.textContent = '📹 Start Recording';
+      btn.classList.remove('recording');
+      document.getElementById('recordingStatus').textContent = '⚫ Stopped';
+      this.stopVideoRecording();
+      this.showSuccess('📼 Recording stopped (use Download Data)');
+    }
+  }
+
+  // Video Recording: store blob in this.videoBlob (do NOT auto-download)
+  startVideoRecording(){
+    this.videoChunks = [];
+    this.videoBlob = null;
+
+    if (!this.video || !this.video.srcObject) {
+      console.warn('No video stream to record');
+      return;
+    }
+
+    // choose mimeType with graceful fallback
+    let options = null;
+    const possible = [
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
+    for (const p of possible){
+      try {
+        if (MediaRecorder.isTypeSupported(p)) { options = { mimeType: p }; break; }
+      } catch(e){}
+    }
+    try {
+      this.mediaRecorder = new MediaRecorder(this.video.srcObject, options || undefined);
+    } catch (e) {
+      try {
+        this.mediaRecorder = new MediaRecorder(this.video.srcObject);
+      } catch (err) {
+        console.error('MediaRecorder not supported', err);
+        alert('Video recording is not supported in this browser.');
+        return;
+      }
+    }
+
+    this.mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) this.videoChunks.push(e.data); };
+    this.mediaRecorder.onstop = () => {
+      try {
+        this.videoBlob = new Blob(this.videoChunks, { type: this.videoChunks[0]?.type || 'video/webm' });
+        // keep blob for packaging into ZIP later
+        console.log('Video blob ready, size bytes:', this.videoBlob.size);
+        this.showSuccess('🎥 Video recorded — ready in Download Data');
+      } catch (e) {
+        console.error('Error creating video blob', e);
+      }
+    };
+    this.mediaRecorder.start();
+    console.log('MediaRecorder started', this.mediaRecorder.mimeType);
+  }
+
+  stopVideoRecording(){
+    try {
+      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+        this.mediaRecorder.stop();
+      }
+    } catch (e) { console.warn(e); }
+  }
+
+  // Export JSON, CSV and include video if present (bundles into ZIP via JSZip if available)
+  async downloadData(){
+    if (!this.motionData || this.motionData.length === 0){
+      alert('No motion data to download. Start recording first!');
+      return;
+    }
+
+    const exportObj = {
+      sessionInfo: {
+        date: new Date().toISOString(),
+        duration_ms: this.motionData[this.motionData.length-1].t || 0,
+        totalScore: this.score,
+        ballsCollected: this.collected,
+        finalLevel: this.level,
+        highScore: this.highScore,
+        dataPoints: this.motionData.length
+      },
+      motionData: this.motionData
+    };
+
+    // create JSON and CSV blobs
+    const jsonStr = JSON.stringify(exportObj, null, 2);
+    const jsonBlob = new Blob([jsonStr], { type: 'application/json' });
+    const csvStr = this.motionDataToCSV();
+    const csvBlob = new Blob([csvStr], { type: 'text/csv' });
+
+    // If JSZip is present, build a zip containing JSON, CSV and video (if available)
+    if (window.JSZip){
+      try {
+        const zip = new JSZip();
+        const baseName = `motion_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}`;
+        zip.file(`${baseName}.json`, jsonBlob);
+        zip.file(`${baseName}.csv`, csvBlob);
+        if (this.videoBlob){
+          zip.file(`${baseName}.webm`, this.videoBlob);
+        }
+        const content = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `${baseName}.zip`;
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+        this.showSuccess('📁 ZIP Downloaded!');
+        return;
+      } catch (e) {
+        console.warn('JSZip failed, falling back to separate downloads', e);
+      }
+    }
+
+    // fallback: download JSON & CSV separately, and video if available
+    const jsonUrl = URL.createObjectURL(jsonBlob);
+    const jsonA = document.createElement('a'); jsonA.href = jsonUrl;
+    jsonA.download = `motion_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+    document.body.appendChild(jsonA); jsonA.click(); jsonA.remove(); URL.revokeObjectURL(jsonUrl);
+
+    const csvUrl = URL.createObjectURL(csvBlob);
+    const csvA = document.createElement('a'); csvA.href = csvUrl;
+    csvA.download = `motion_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+    document.body.appendChild(csvA); csvA.click(); csvA.remove(); URL.revokeObjectURL(csvUrl);
+
+    if (this.videoBlob){
+      const vUrl = URL.createObjectURL(this.videoBlob);
+      const vA = document.createElement('a'); vA.href = vUrl;
+      vA.download = `motion_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
+      document.body.appendChild(vA); vA.click(); vA.remove(); URL.revokeObjectURL(vUrl);
+    }
+    this.showSuccess('📁 Data Downloaded!');
+  }
+
+  resetGame(){
+    this.score = 0; this.level = 1; this.collected = 0;
+    this.motionData = []; this.recording = false; this.recordStart = null;
+    this.videoChunks = []; this.videoBlob = null;
+    try { if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') this.mediaRecorder.stop(); } catch(e){}
+    document.getElementById('recordBtn').textContent = '📹 Start Recording'; document.getElementById('recordBtn').classList.remove('recording');
+    document.getElementById('recordingStatus').textContent = '⚫ Stopped';
+    if (this.currentBall){ this.currentBall.remove(); this.currentBall = null; }
+    if (this.gameStarted) this.spawnBall();
+    this.updateUI();
+  }
+
+  darkenColor(hex, factor){
+    const h = hex.replace('#','');
+    const r = Math.max(0, Math.floor(parseInt(h.substring(0,2),16) * (1-factor)));
+    const g = Math.max(0, Math.floor(parseInt(h.substring(2,4),16) * (1-factor)));
+    const b = Math.max(0, Math.floor(parseInt(h.substring(4,6),16) * (1-factor))); 
+    return `rgb(${r},${g},${b})`;
+  }
+
+  loop(){
+    if (!this.gameStarted) return;
+    requestAnimationFrame(()=> this.loop());
+  }
+
+  stopAll(){
+    try { if (this.cameraHelper && typeof this.cameraHelper.stop === 'function') this.cameraHelper.stop(); } catch(e){}
+    try { if (this.hands && typeof this.hands.close === 'function') this.hands.close(); } catch(e){}
+    if (this.video && this.video.srcObject) this.video.srcObject.getTracks().forEach(t => t.stop());
+    this.video.srcObject = null;
+    // Stop background music
+    if (this.backgroundMusic) { this.backgroundMusic.pause(); }
+  }
+}
+
+/* global instance and global functions for buttons */
+let game = new MotionGame();
+
+function startGame(){ if (!game) game = new MotionGame(); game.startGame(); }
+function toggleRecording(){ if (!game || !game.gameStarted) { alert('Start game first'); return; } game.toggleRecording(); }
+function downloadData(){ if (!game) { alert('No game'); return; } game.downloadData(); }
+function resetGame(){ if (game) game.resetGame(); }
+
+window.addEventListener('beforeunload', ()=> { if (game) game.stopAll(); });
+</script>
+</body>
+</html>
