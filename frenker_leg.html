@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Leg Coordination Game</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298); overflow: hidden; height: 100vh; }
+        #gameContainer { position: relative; width: 100vw; height: 100vh; }
+        #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3; cursor: none; }
+        
+        .ui-panel {
+            position: absolute;
+            z-index: 5;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+        }
+        #controls { top: 20px; right: 20px; }
+        #pose-info { top: 20px; left: 20px; font-size: 14px; }
+        #instructions { bottom: 20px; left: 50%; transform: translateX(-50%); text-align: center; max-width: 80%; }
+        
+        button { background: #4CAF50; color: white; border: none; padding: 10px 20px; margin: 5px; border-radius: 5px; cursor: pointer; font-size: 16px; transition: background-color 0.3s; }
+        button:hover { background: #45a049; }
+        
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; background: rgba(0, 0, 0, 0.9); color: white; padding: 30px; border-radius: 15px; text-align: center; font-size: 20px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 2s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        #congratsMessage {
+            display: none;
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 4;
+            font-size: 6vw;
+            font-weight: bold;
+            color: #FFD700;
+            text-shadow: 3px 3px 6px #000;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: translateX(-50%) scale(1); opacity: 1; }
+            50% { transform: translateX(-50%) scale(1.1); opacity: 0.9; }
+            100% { transform: translateX(-50%) scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        
+        <audio id="successSound" src="audio.mp3"></audio>
+        
+        <div id="congratsMessage">Perfect! <br>Lets try another</div>
+
+        <div id="controls" class="ui-panel">
+            <button id="startBtn">Start Game</button>
+        </div>
+
+        <div id="pose-info" class="ui-panel">
+            <div>Status: <span id="status">Loading...</span></div>
+            <div>Pose: <span id="poseStatus">...</span></div>
+            <div>Feet Detected: <span id="feetStatus">No</span></div>
+        </div>
+        
+        <div id="instructions" class="ui-panel">
+            <!-- **MODIFIED**: Instructions for 3D effect -->
+            <strong>3D Leg Coordination Exercise</strong><br>
+            Touch the glowing number. Some are closer, some are farther away!
+        </div>
+
+        <div id="loading" class="loading">
+            <div>Loading Pose Detection...</div>
+            <div class="spinner"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script>
+        class LegFrenkelGame3D {
+            constructor() {
+                this.video = document.getElementById('video');
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.loading = document.getElementById('loading');
+                this.successSound = document.getElementById('successSound');
+                this.congratsMessage = document.getElementById('congratsMessage');
+
+                this.isGameActive = false;
+                this.isCelebrating = false;
+                this.celebrationTimer = null;
+                this.targets = [];
+                this.currentTarget = null;
+                this.lastTarget = null;
+                this.confetti = [];
+
+                this.feetMidpoint = null;
+                this.leftFootPosition = null;
+                this.rightFootPosition = null;
+                
+                // **MODIFIED**: Constants for the 3D ellipse effect
+                this.BASE_TARGET_RADIUS = 30; // Base size of the target
+                this.TARGET_X_RADIUS = 350;   // How wide the ellipse is
+                this.TARGET_Y_RADIUS = 80;    // How "deep" the ellipse is (perspective)
+                this.MIN_SCALE = 0.6;         // Scale of the farthest target
+                this.MAX_SCALE = 1.4;         // Scale of the nearest target
+                this.CELEBRATION_DURATION = 4000;
+
+                this.setupCanvas();
+                this.setupEventListeners();
+                this.initialize();
+                this.gameLoop();
+            }
+
+            setupCanvas() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                window.addEventListener('resize', () => {
+                    this.canvas.width = window.innerWidth;
+                    this.canvas.height = window.innerHeight;
+                });
+            }
+
+            setupEventListeners() {
+                document.getElementById('startBtn').addEventListener('click', () => this.toggleGame());
+            }
+
+            async initialize() {
+                try {
+                    await this.setupCamera();
+                    await this.setupPoseDetection();
+                    this.loading.style.display = 'none';
+                    document.getElementById('status').textContent = 'Ready';
+                } catch (error) {
+                    document.getElementById('status').textContent = 'Error!';
+                    console.error('Initialization error:', error);
+                }
+            }
+
+            async setupCamera() {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } });
+                this.video.srcObject = stream;
+                return new Promise(resolve => this.video.onloadedmetadata = resolve);
+            }
+
+            async setupPoseDetection() {
+                const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+                pose.setOptions({
+                    modelComplexity: 1,
+                    smoothLandmarks: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                pose.onResults(this.onPoseResults.bind(this));
+                new Camera(this.video, {
+                    onFrame: async () => await pose.send({ image: this.video }),
+                    width: 1280,
+                    height: 720
+                }).start();
+            }
+
+            onPoseResults(results) {
+                if (!results.poseLandmarks) {
+                    document.getElementById('poseStatus').textContent = 'No pose';
+                    return;
+                }
+                document.getElementById('poseStatus').textContent = 'Detected';
+                
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+                const landmarks = results.poseLandmarks;
+
+                const leftFoot = landmarks[31];
+                const rightFoot = landmarks[32];
+                // **MODIFIED**: Center of ellipse is now between the feet
+                if (leftFoot.visibility > 0.5 && rightFoot.visibility > 0.5) {
+                    const footX = 1 - (leftFoot.x + rightFoot.x) / 2;
+                    const footY = (leftFoot.y + rightFoot.y) / 2;
+                    this.feetMidpoint = { x: footX * w, y: footY * h };
+                }
+
+                this.leftFootPosition = { x: (1 - leftFoot.x) * w, y: leftFoot.y * h, visibility: leftFoot.visibility };
+                this.rightFootPosition = { x: (1 - rightFoot.x) * w, y: rightFoot.y * h, visibility: rightFoot.visibility };
+                
+                const leftVisible = this.leftFootPosition.visibility > 0.5;
+                const rightVisible = this.rightFootPosition.visibility > 0.5;
+                let feetStatusText = 'No';
+                if (leftVisible && rightVisible) feetStatusText = 'Both';
+                else if (leftVisible) feetStatusText = 'Left';
+                else if (rightVisible) feetStatusText = 'Right';
+                document.getElementById('feetStatus').textContent = feetStatusText;
+
+                if (this.isGameActive) {
+                    this.updateTargetPositions();
+                    this.checkTouch();
+                }
+            }
+            
+            toggleGame() {
+                this.isGameActive = !this.isGameActive;
+                document.getElementById('startBtn').textContent = this.isGameActive ? 'Stop Game' : 'Start Game';
+                if (this.isGameActive) this.startGame();
+                else this.stopGame();
+            }
+
+            startGame() {
+                this.createTargets();
+                this.pickNextTarget();
+            }
+
+            stopGame() {
+                this.targets = [];
+                this.currentTarget = null;
+                this.isCelebrating = false;
+                clearTimeout(this.celebrationTimer);
+                this.congratsMessage.style.display = 'none';
+                this.successSound.pause();
+            }
+
+            createTargets() {
+                this.targets = [];
+                // **MODIFIED**: Angles are spaced around a full circle
+                const angleIncrement = 360 / 5;
+                for (let i = 0; i < 5; i++) {
+                    this.targets.push({
+                        value: i + 1,
+                        angle: 270 + (i * angleIncrement), // Start at the bottom and go around
+                        x: 0, y: 0, depth: 0, scale: 1, currentRadius: this.BASE_TARGET_RADIUS,
+                        isBlinking: false
+                    });
+                }
+            }
+            
+            updateTargetPositions() {
+                if (!this.feetMidpoint) return;
+                
+                this.targets.forEach(target => {
+                    const angleRad = target.angle * (Math.PI / 180);
+                    
+                    // Ellipse calculation for position
+                    target.x = this.feetMidpoint.x + Math.cos(angleRad) * this.TARGET_X_RADIUS;
+                    target.y = this.feetMidpoint.y + Math.sin(angleRad) * this.TARGET_Y_RADIUS;
+                    
+                    // **NEW**: Calculate depth and scale for 3D effect
+                    target.depth = Math.sin(angleRad); // -1 (front) to 1 (back)
+                    const normalizedDepth = (target.depth + 1) / 2; // 0 (front) to 1 (back)
+                    target.scale = this.MAX_SCALE - (normalizedDepth * (this.MAX_SCALE - this.MIN_SCALE));
+                    target.currentRadius = this.BASE_TARGET_RADIUS * target.scale;
+                });
+
+                // **NEW**: Sort targets by depth so they draw correctly (back to front)
+                this.targets.sort((a, b) => a.depth - b.depth);
+            }
+
+            pickNextTarget() {
+                this.isCelebrating = false;
+                this.congratsMessage.style.display = 'none';
+                if (this.currentTarget) this.currentTarget.isBlinking = false;
+                
+                let availableTargets = this.targets.filter(t => t !== this.lastTarget);
+                if (availableTargets.length === 0) availableTargets = this.targets;
+
+                this.currentTarget = availableTargets[Math.floor(Math.random() * availableTargets.length)];
+                this.lastTarget = this.currentTarget;
+                this.currentTarget.isBlinking = true;
+            }
+
+            checkTouch() {
+                if (this.isCelebrating || !this.currentTarget || !this.feetMidpoint) return;
+                
+                const checkCollision = (foot) => {
+                    if (!foot || foot.visibility < 0.5) return false;
+                    const dx = foot.x - this.currentTarget.x;
+                    const dy = foot.y - this.currentTarget.y;
+                    // **MODIFIED**: Use the target's current dynamic radius for collision
+                    return Math.sqrt(dx * dx + dy * dy) < this.currentTarget.currentRadius;
+                };
+
+                if (checkCollision(this.leftFootPosition) || checkCollision(this.rightFootPosition)) {
+                    this.triggerCelebration();
+                }
+            }
+
+            triggerCelebration() {
+                this.isCelebrating = true;
+                this.congratsMessage.style.display = 'block';
+                this.successSound.currentTime = 0;
+                this.successSound.play();
+                this.createConfetti();
+                
+                clearTimeout(this.celebrationTimer);
+                this.celebrationTimer = setTimeout(() => this.pickNextTarget(), this.CELEBRATION_DURATION);
+            }
+
+            createConfetti() {
+                this.confetti = [];
+                for (let i = 0; i < 150; i++) {
+                    this.confetti.push({
+                        x: Math.random() * this.canvas.width, y: -20, size: Math.random() * 10 + 5,
+                        speedX: Math.random() * 6 - 3, speedY: Math.random() * 5 + 2,
+                        color: `hsl(${Math.random() * 360}, 100%, 50%)`, rotation: Math.random() * 360
+                    });
+                }
+            }
+            
+            updateAndDrawConfetti() {
+                this.confetti.forEach((p, index) => {
+                    p.x += p.speedX; p.y += p.speedY; p.rotation += p.speedX * 0.5;
+                    this.ctx.save(); this.ctx.translate(p.x, p.y);
+                    this.ctx.rotate(p.rotation * Math.PI / 180);
+                    this.ctx.fillStyle = p.color;
+                    this.ctx.globalAlpha = p.y < this.canvas.height - 50 ? 1 : (this.canvas.height - p.y) / 50;
+                    this.ctx.fillRect(-p.size / 2, -p.size, p.size, p.size * 2);
+                    this.ctx.restore();
+                    if (p.y > this.canvas.height) this.confetti.splice(index, 1);
+                });
+            }
+
+            drawDebugMarkers() {
+                const drawMarker = (foot) => {
+                    if (foot && foot.visibility > 0.5) {
+                        this.ctx.beginPath(); this.ctx.arc(foot.x, foot.y, 25, 0, Math.PI * 2);
+                        this.ctx.fillStyle = "rgba(255, 255, 255, 0.5)"; this.ctx.fill();
+                    }
+                };
+                drawMarker(this.leftFootPosition); drawMarker(this.rightFootPosition);
+            }
+
+            draw() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                if (this.isGameActive && this.feetMidpoint) {
+                    // The pre-sorted targets are drawn here
+                    this.targets.forEach(target => {
+                        const radius = target.currentRadius;
+                        
+                        this.ctx.beginPath();
+                        this.ctx.arc(target.x, target.y, radius, 0, Math.PI * 2);
+
+                        // **MODIFIED**: Alpha is also based on depth
+                        const normalizedDepth = (target.depth + 1) / 2; // 0 (front) to 1 (back)
+                        const alpha = 1.0 - (normalizedDepth * 0.4); // Farthest is 60% opaque
+                        
+                        if (target.isBlinking && !this.isCelebrating) {
+                            const glow = Math.abs(Math.sin(Date.now() * 0.005));
+                            this.ctx.fillStyle = `rgba(255, 255, 0, ${0.5 * alpha + glow * 0.5 * alpha})`;
+                            this.ctx.shadowColor = 'yellow';
+                            this.ctx.shadowBlur = 20 * target.scale;
+                        } else {
+                            this.ctx.fillStyle = `rgba(0, 150, 255, ${0.8 * alpha})`;
+                            this.ctx.shadowColor = 'blue';
+                            this.ctx.shadowBlur = 10 * target.scale;
+                        }
+                        this.ctx.fill();
+                        this.ctx.shadowBlur = 0;
+                        
+                        this.ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                        this.ctx.font = `bold ${radius * 0.8}px 'Segoe UI'`;
+                        this.ctx.textAlign = 'center';
+                        this.ctx.textBaseline = 'middle';
+                        this.ctx.fillText(target.value, target.x, target.y);
+                    });
+
+                    this.drawDebugMarkers(); 
+                }
+
+                if (this.isCelebrating) {
+                    this.updateAndDrawConfetti();
+                }
+            }
+
+            gameLoop() {
+                this.draw();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => new LegFrenkelGame3D());
+    </script>
+</body>
+</html>

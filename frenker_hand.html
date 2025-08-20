@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frenkel Coordination Game</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298); overflow: hidden; height: 100vh; }
+        #gameContainer { position: relative; width: 100vw; height: 100vh; }
+        #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3; cursor: none; }
+        
+        .ui-panel {
+            position: absolute;
+            z-index: 5;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+        }
+        #controls { top: 20px; right: 20px; }
+        #pose-info { top: 20px; left: 20px; font-size: 14px; }
+        #instructions { bottom: 20px; left: 50%; transform: translateX(-50%); text-align: center; max-width: 80%; }
+        
+        button { background: #4CAF50; color: white; border: none; padding: 10px 20px; margin: 5px; border-radius: 5px; cursor: pointer; font-size: 16px; transition: background-color 0.3s; }
+        button:hover { background: #45a049; }
+        
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; background: rgba(0, 0, 0, 0.9); color: white; padding: 30px; border-radius: 15px; text-align: center; font-size: 20px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 2s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        #congratsMessage {
+            display: none;
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 4;
+            font-size: 6vw;
+            font-weight: bold;
+            color: #FFD700;
+            text-shadow: 3px 3px 6px #000;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: translateX(-50%) scale(1); opacity: 1; }
+            50% { transform: translateX(-50%) scale(1.1); opacity: 0.9; }
+            100% { transform: translateX(-50%) scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        
+        <audio id="successSound" src="audio.mp3"></audio>
+        
+        <div id="congratsMessage">YEAH!!! <br>You did it.</div>
+
+        <div id="controls" class="ui-panel">
+            <button id="startBtn">Start Game</button>
+        </div>
+
+        <div id="pose-info" class="ui-panel">
+            <div>Status: <span id="status">Loading...</span></div>
+            <div>Pose: <span id="poseStatus">...</span></div>
+            <div>Hands Detected: <span id="handsStatus">No</span></div>
+        </div>
+        
+        <div id="instructions" class="ui-panel">
+            <strong>Coordination Exercise</strong><br>
+            Touch the glowing number with the transparent circles on your hands.
+        </div>
+
+        <div id="loading" class="loading">
+            <div>Loading Pose Detection...</div>
+            <div class="spinner"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script>
+        class FrenkelGame {
+            constructor() {
+                this.video = document.getElementById('video');
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.loading = document.getElementById('loading');
+                this.successSound = document.getElementById('successSound');
+                this.congratsMessage = document.getElementById('congratsMessage');
+
+                this.isGameActive = false;
+                this.isCelebrating = false;
+                this.celebrationTimer = null;
+                this.targets = [];
+                this.currentTarget = null;
+                this.lastTarget = null;
+                this.confetti = [];
+
+                this.headPosition = null;
+                this.leftHandPosition = null;
+                this.rightHandPosition = null;
+                
+                this.TARGET_RADIUS = 50;
+                // **MODIFIED**: Increased the distance from the head
+                this.HEAD_DISTANCE = 440; 
+                this.CELEBRATION_DURATION = 4000;
+
+                this.setupCanvas();
+                this.setupEventListeners();
+                this.initialize();
+                this.gameLoop();
+            }
+
+            setupCanvas() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                window.addEventListener('resize', () => {
+                    this.canvas.width = window.innerWidth;
+                    this.canvas.height = window.innerHeight;
+                });
+            }
+
+            setupEventListeners() {
+                document.getElementById('startBtn').addEventListener('click', () => this.toggleGame());
+            }
+
+            async initialize() {
+                try {
+                    await this.setupCamera();
+                    await this.setupPoseDetection();
+                    this.loading.style.display = 'none';
+                    document.getElementById('status').textContent = 'Ready';
+                } catch (error) {
+                    document.getElementById('status').textContent = 'Error!';
+                    console.error('Initialization error:', error);
+                }
+            }
+
+            async setupCamera() {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } });
+                this.video.srcObject = stream;
+                return new Promise(resolve => this.video.onloadedmetadata = resolve);
+            }
+
+            async setupPoseDetection() {
+                const pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+                pose.setOptions({
+                    modelComplexity: 1,
+                    smoothLandmarks: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                pose.onResults(this.onPoseResults.bind(this));
+                new Camera(this.video, {
+                    onFrame: async () => await pose.send({ image: this.video }),
+                    width: 1280,
+                    height: 720
+                }).start();
+            }
+
+            onPoseResults(results) {
+                if (!results.poseLandmarks) {
+                    document.getElementById('poseStatus').textContent = 'No pose';
+                    return;
+                }
+                document.getElementById('poseStatus').textContent = 'Detected';
+                
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+                const landmarks = results.poseLandmarks;
+
+                this.headPosition = { x: (1 - landmarks[0].x) * w, y: landmarks[0].y * h };
+                this.leftHandPosition = { x: (1 - landmarks[19].x) * w, y: landmarks[19].y * h, visibility: landmarks[19].visibility };
+                this.rightHandPosition = { x: (1 - landmarks[20].x) * w, y: landmarks[20].y * h, visibility: landmarks[20].visibility };
+                
+                const leftVisible = this.leftHandPosition.visibility > 0.5;
+                const rightVisible = this.rightHandPosition.visibility > 0.5;
+                let handsStatusText = 'No';
+                if (leftVisible && rightVisible) handsStatusText = 'Both';
+                else if (leftVisible) handsStatusText = 'Left';
+                else if (rightVisible) handsStatusText = 'Right';
+                document.getElementById('handsStatus').textContent = handsStatusText;
+
+                if (this.isGameActive) {
+                    this.updateTargetPositions();
+                    this.checkTouch();
+                }
+            }
+            
+            toggleGame() {
+                this.isGameActive = !this.isGameActive;
+                document.getElementById('startBtn').textContent = this.isGameActive ? 'Stop Game' : 'Start Game';
+                if (this.isGameActive) this.startGame();
+                else this.stopGame();
+            }
+
+            startGame() {
+                this.createTargets();
+                this.pickNextTarget();
+            }
+
+            stopGame() {
+                this.targets = [];
+                this.currentTarget = null;
+                this.isCelebrating = false;
+                clearTimeout(this.celebrationTimer);
+                this.congratsMessage.style.display = 'none';
+                this.successSound.pause();
+            }
+
+            createTargets() {
+                this.targets = [];
+                const angles = [15, 55, 90, 125, 165];
+                for (let i = 0; i < 5; i++) {
+                    this.targets.push({
+                        value: i + 1,
+                        angle: angles[i],
+                        x: 0, y: 0,
+                        isBlinking: false
+                    });
+                }
+            }
+            
+            updateTargetPositions() {
+                if (!this.headPosition) return;
+                this.targets.forEach(target => {
+                    const angleRad = target.angle * (Math.PI / 180);
+                    target.x = this.headPosition.x + Math.cos(angleRad) * this.HEAD_DISTANCE;
+                    target.y = this.headPosition.y - Math.sin(angleRad) * this.HEAD_DISTANCE;
+                });
+            }
+
+            pickNextTarget() {
+                this.isCelebrating = false;
+                this.congratsMessage.style.display = 'none';
+                if (this.currentTarget) this.currentTarget.isBlinking = false;
+                
+                let availableTargets = this.targets.filter(t => t !== this.lastTarget);
+                if (availableTargets.length === 0) availableTargets = this.targets;
+
+                this.currentTarget = availableTargets[Math.floor(Math.random() * availableTargets.length)];
+                this.lastTarget = this.currentTarget;
+                this.currentTarget.isBlinking = true;
+            }
+
+            checkTouch() {
+                if (this.isCelebrating || !this.currentTarget || !this.headPosition) return;
+                
+                const checkCollision = (hand) => {
+                    if (!hand || hand.visibility < 0.5) return false;
+                    const dx = hand.x - this.currentTarget.x;
+                    const dy = hand.y - this.currentTarget.y;
+                    return Math.sqrt(dx * dx + dy * dy) < this.TARGET_RADIUS;
+                };
+
+                if (checkCollision(this.leftHandPosition) || checkCollision(this.rightHandPosition)) {
+                    this.triggerCelebration();
+                }
+            }
+
+            triggerCelebration() {
+                this.isCelebrating = true;
+                this.congratsMessage.style.display = 'block';
+                this.successSound.currentTime = 0;
+                this.successSound.play();
+                this.createConfetti();
+                
+                clearTimeout(this.celebrationTimer);
+                this.celebrationTimer = setTimeout(() => this.pickNextTarget(), this.CELEBRATION_DURATION);
+            }
+
+            createConfetti() {
+                this.confetti = [];
+                const confettiCount = 150;
+                const colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4CAF50', '#8BC34A', '#CDDC39', '#FFEB3B', '#FFC107', '#FF9800'];
+                for (let i = 0; i < confettiCount; i++) {
+                    this.confetti.push({
+                        x: Math.random() * this.canvas.width,
+                        y: -20,
+                        size: Math.random() * 10 + 5,
+                        speedX: Math.random() * 6 - 3,
+                        speedY: Math.random() * 5 + 2,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        rotation: Math.random() * 360
+                    });
+                }
+            }
+            
+            updateAndDrawConfetti() {
+                if (this.confetti.length === 0) return;
+                this.confetti.forEach((p, index) => {
+                    p.x += p.speedX;
+                    p.y += p.speedY;
+                    p.rotation += p.speedX * 0.5;
+
+                    this.ctx.save();
+                    this.ctx.translate(p.x, p.y);
+                    this.ctx.rotate(p.rotation * Math.PI / 180);
+                    this.ctx.fillStyle = p.color;
+                    this.ctx.globalAlpha = p.y < this.canvas.height - 50 ? 1 : (this.canvas.height - p.y) / 50;
+                    this.ctx.fillRect(-p.size / 2, -p.size, p.size, p.size * 2);
+                    this.ctx.restore();
+
+                    if (p.y > this.canvas.height) this.confetti.splice(index, 1);
+                });
+            }
+
+            drawDebugMarkers() {
+                const drawMarker = (hand) => {
+                    if (hand && hand.visibility > 0.5) {
+                        this.ctx.beginPath();
+                        this.ctx.arc(hand.x, hand.y, 25, 0, Math.PI * 2);
+                        this.ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+                        this.ctx.fill();
+                    }
+                };
+                drawMarker(this.leftHandPosition);
+                drawMarker(this.rightHandPosition);
+            }
+
+            draw() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                if (this.isGameActive) {
+                    if (this.headPosition) {
+                        this.targets.forEach(target => {
+                            this.ctx.beginPath();
+                            this.ctx.arc(target.x, target.y, this.TARGET_RADIUS, 0, Math.PI * 2);
+                            if (target.isBlinking && !this.isCelebrating) {
+                                const glow = Math.abs(Math.sin(Date.now() * 0.005));
+                                this.ctx.fillStyle = `rgba(255, 255, 0, ${0.5 + glow * 0.5})`;
+                                this.ctx.shadowColor = 'yellow';
+                                this.ctx.shadowBlur = 30;
+                            } else {
+                                this.ctx.fillStyle = 'rgba(0, 150, 255, 0.8)';
+                                this.ctx.shadowColor = 'blue';
+                                this.ctx.shadowBlur = 10;
+                            }
+                            this.ctx.fill();
+                            this.ctx.shadowBlur = 0;
+                            this.ctx.fillStyle = 'white';
+                            this.ctx.font = `bold ${this.TARGET_RADIUS * 0.8}px 'Segoe UI'`;
+                            this.ctx.textAlign = 'center';
+                            this.ctx.textBaseline = 'middle';
+                            this.ctx.fillText(target.value, target.x, target.y);
+                        });
+                    }
+                    this.drawDebugMarkers(); 
+                }
+
+                if (this.isCelebrating) {
+                    this.updateAndDrawConfetti();
+                }
+            }
+
+            gameLoop() {
+                this.draw();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => new FrenkelGame());
+    </script>
+</body>
+</html>

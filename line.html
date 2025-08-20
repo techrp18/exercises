@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Line Intersection Visualizer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298); overflow: hidden; height: 100vh; }
+        #gameContainer { position: relative; width: 100vw; height: 100vh; }
+        #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; cursor: none; }
+        
+        /* UI Panels */
+        .controls, .pose-info, .crossing-info, .instructions {
+            position: absolute;
+            z-index: 3;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+        }
+        .controls { top: 20px; right: 20px; }
+        .pose-info { top: 20px; left: 20px; font-size: 14px; }
+        .crossing-info { top: 150px; left: 20px; font-size: 14px; }
+        .instructions { bottom: 20px; left: 50%; transform: translateX(-50%); text-align: center; max-width: 80%; }
+        
+        button { background: #4CAF50; color: white; border: none; padding: 10px 20px; margin: 5px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #45a049; }
+        
+        .loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 4; background: rgba(0, 0, 0, 0.9); color: white; padding: 30px; border-radius: 15px; text-align: center; font-size: 20px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 2s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* **NEW**: Style for the congratulations message */
+        .congrats {
+            display: none; /* Hidden by default */
+            position: absolute;
+            top: 25%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            font-size: 48px;
+            font-weight: bold;
+            color: #FFD700; /* Gold color */
+            text-shadow: 2px 2px 4px #000000;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: translateX(-50%) scale(1); }
+            50% { transform: translateX(-50%) scale(1.1); }
+            100% { transform: translateX(-50%) scale(1); }
+        }
+
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        
+        <!-- **NEW**: Audio element for the sound effect -->
+        <audio id="intersectSound" loop src="audio.mp3"></audio>
+        
+        <!-- **NEW**: Congratulations message element -->
+        <div id="congratsMessage" class="congrats">
+            You are on right track!
+        </div>
+
+        <div class="controls">
+            <button id="startBtn">Start Detection</button>
+            <div style="margin-top: 10px;">
+                <label style="color: white;">Move Line:</label><br>
+                <button id="moveUpBtn">↑</button> <button id="moveDownBtn">↓</button> <button id="moveLeftBtn">←</button> <button id="moveRightBtn">→</button><br>
+                <button id="rotateBtn">🔄 Rotate</button>
+            </div>
+        </div>
+
+        <div class="pose-info">
+            <div>Status: <span id="status">Loading...</span></div>
+            <div>Pose Detection: <span id="poseStatus">Loading...</span></div>
+            <div>Arm Detected: <span id="armStatus">No</span></div>
+            <div>Confidence: <span id="confidence">0%</span></div>
+        </div>
+        
+        <div class="crossing-info">
+            <div style="font-weight: bold; font-size: 16px;">Intersection Status:</div>
+            <div style="font-size: 20px; margin-top: 5px;">
+                <span id="intersectionStatus">WAITING</span>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <strong>Line Intersection Visualizer</strong><br>
+            Maintain intersection to see the effect grow and hear the sound!
+        </div>
+
+        <div id="loading" class="loading">
+            <div>Loading pose detection...</div>
+            <div class="spinner"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script>
+        class LineVisualizer {
+            constructor() {
+                this.video = document.getElementById('video');
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.loading = document.getElementById('loading');
+                
+                // **NEW**: Get references to new HTML elements
+                this.intersectSound = document.getElementById('intersectSound');
+                this.congratsMessage = document.getElementById('congratsMessage');
+                
+                this.isDetectionActive = false;
+                this.wasIntersecting = false; // To track state changes
+                
+                this.targetLine = { x: window.innerWidth / 2, y: window.innerHeight / 2, length: 250, angle: Math.PI / 4 };
+                this.handLine = { start: null, end: null };
+
+                // **NEW**: State for managing the visual effects
+                this.effectState = {
+                    active: false,
+                    x: 0,
+                    y: 0,
+                    size: 30 // Initial emoji font size
+                };
+                
+                this.setupCanvas();
+                this.setupEventListeners();
+                this.initialize();
+                this.gameLoop();
+            }
+
+            setupCanvas() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                window.addEventListener('resize', () => {
+                    this.canvas.width = window.innerWidth;
+                    this.canvas.height = window.innerHeight;
+                });
+            }
+
+            setupEventListeners() {
+                document.getElementById('startBtn').addEventListener('click', () => this.toggleDetection());
+                document.getElementById('moveUpBtn').addEventListener('click', () => this.moveTargetLine(0, -20));
+                document.getElementById('moveDownBtn').addEventListener('click', () => this.moveTargetLine(0, 20));
+                document.getElementById('moveLeftBtn').addEventListener('click', () => this.moveTargetLine(-20, 0));
+                document.getElementById('moveRightBtn').addEventListener('click', () => this.moveTargetLine(20, 0));
+                document.getElementById('rotateBtn').addEventListener('click', () => this.rotateTargetLine());
+            }
+
+            async initialize() {
+                try {
+                    await this.setupCamera();
+                    await this.setupPoseDetection();
+                    this.loading.style.display = 'none';
+                    document.getElementById('status').textContent = 'Ready';
+                } catch (error) {
+                    console.error('Initialization error:', error);
+                    document.getElementById('status').textContent = 'Mouse fallback';
+                    this.setupMouseSimulation();
+                }
+            }
+
+            async setupCamera() {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } });
+                this.video.srcObject = stream;
+                return new Promise(resolve => this.video.onloadedmetadata = resolve);
+            }
+
+            async setupPoseDetection() {
+                this.pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+                this.pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                this.pose.onResults(this.onPoseResults.bind(this));
+                const camera = new Camera(this.video, {
+                    onFrame: async () => await this.pose.send({ image: this.video }),
+                    width: 1280,
+                    height: 720
+                });
+                await camera.start();
+            }
+
+            onPoseResults(results) {
+                if (!results.poseLandmarks) {
+                    document.getElementById('armStatus').textContent = 'No';
+                    if (this.isDetectionActive && this.wasIntersecting) this.stopEffects(); // Stop effects if pose is lost
+                    return;
+                }
+                document.getElementById('poseStatus').textContent = 'Pose detected';
+                const landmarks = results.poseLandmarks;
+                let elbow = landmarks[13], hand = landmarks[15], side = 'Left';
+                if (!elbow || !hand || elbow.visibility < 0.5 || hand.visibility < 0.5) {
+                    elbow = landmarks[14]; hand = landmarks[16]; side = 'Right';
+                }
+                if (elbow && hand && elbow.visibility > 0.5 && hand.visibility > 0.5) {
+                    document.getElementById('armStatus').textContent = `${side} arm`;
+                    if (this.isDetectionActive) {
+                        const elbowX = (1 - elbow.x) * this.canvas.width;
+                        const handX = (1 - hand.x) * this.canvas.width;
+                        this.updateHandLine(elbowX, elbow.y * this.canvas.height, handX, hand.y * this.canvas.height);
+                    }
+                } else {
+                    document.getElementById('armStatus').textContent = 'No';
+                     if (this.isDetectionActive && this.wasIntersecting) this.stopEffects();
+                }
+            }
+            
+            setupMouseSimulation() {
+                let mouseX = 0, mouseY = 0;
+                document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+                setInterval(() => {
+                    if (this.isDetectionActive) this.updateHandLine(mouseX - 150, mouseY + 50, mouseX, mouseY);
+                }, 50);
+            }
+
+            updateHandLine(elbowX, elbowY, handX, handY) {
+                this.handLine.start = { x: elbowX, y: elbowY };
+                this.handLine.end = { x: handX, y: handY };
+                this.checkIntersection();
+            }
+
+            checkIntersection() {
+                if (!this.handLine.start || !this.handLine.end) return;
+
+                const intersectionPoint = this.lineIntersection(
+                    this.handLine.start, this.handLine.end,
+                    this.getTargetLineStart(), this.getTargetLineEnd()
+                );
+                
+                const isIntersecting = !!intersectionPoint;
+                
+                if (isIntersecting && !this.wasIntersecting) {
+                    this.startEffects(intersectionPoint); // New intersection started
+                } else if (isIntersecting && this.wasIntersecting) {
+                    this.updateEffects(intersectionPoint); // Intersection continues
+                } else if (!isIntersecting && this.wasIntersecting) {
+                    this.stopEffects(); // Intersection ended
+                }
+
+                this.wasIntersecting = isIntersecting;
+                this.updateIntersectionUI(isIntersecting);
+            }
+
+            // **NEW**: Functions to manage effects
+            startEffects(point) {
+                this.effectState.active = true;
+                this.effectState.size = 30; // Reset size
+                this.effectState.x = point.x;
+                this.effectState.y = point.y;
+                
+                this.congratsMessage.style.display = 'block';
+                this.intersectSound.currentTime = 0;
+                this.intersectSound.play();
+            }
+
+            updateEffects(point) {
+                this.effectState.size += 0.5; // Grow the emoji
+                this.effectState.x = point.x; // Update position
+                this.effectState.y = point.y;
+            }
+
+            stopEffects() {
+                this.effectState.active = false;
+                this.congratsMessage.style.display = 'none';
+                this.intersectSound.pause();
+            }
+            
+            updateIntersectionUI(isIntersecting) {
+                const statusEl = document.getElementById('intersectionStatus');
+                if (isIntersecting) {
+                    statusEl.textContent = 'INTERSECTING';
+                    statusEl.style.color = '#ffff00';
+                } else {
+                    statusEl.textContent = 'NO INTERSECTION';
+                    statusEl.style.color = '#ffffff';
+                }
+            }
+
+            lineIntersection(p1, p2, p3, p4) {
+                const d = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+                if (d === 0) return null;
+                const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / d;
+                const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / d;
+                if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+                    return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+                }
+                return null;
+            }
+
+            getTargetLineStart() {
+                const c = Math.cos(this.targetLine.angle), s = Math.sin(this.targetLine.angle), h = this.targetLine.length / 2;
+                return { x: this.targetLine.x - c * h, y: this.targetLine.y - s * h };
+            }
+
+            getTargetLineEnd() {
+                const c = Math.cos(this.targetLine.angle), s = Math.sin(this.targetLine.angle), h = this.targetLine.length / 2;
+                return { x: this.targetLine.x + c * h, y: this.targetLine.y + s * h };
+            }
+
+            moveTargetLine(dx, dy) {
+                this.targetLine.x = Math.max(100, Math.min(this.canvas.width - 100, this.targetLine.x + dx));
+                this.targetLine.y = Math.max(100, Math.min(this.canvas.height - 100, this.targetLine.y + dy));
+            }
+
+            rotateTargetLine() { this.targetLine.angle = (this.targetLine.angle + Math.PI / 6) % (Math.PI * 2); }
+
+            toggleDetection() {
+                this.isDetectionActive = !this.isDetectionActive;
+                document.getElementById('startBtn').textContent = this.isDetectionActive ? 'Stop Detection' : 'Start Detection';
+                if (!this.isDetectionActive) {
+                    this.handLine = { start: null, end: null };
+                    if (this.wasIntersecting) this.stopEffects(); // Ensure effects stop
+                    this.wasIntersecting = false;
+                    this.updateIntersectionUI(false);
+                }
+            }
+
+            draw() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                if (!this.isDetectionActive) return;
+                this.drawTargetLine();
+                if (this.handLine.start && this.handLine.end) this.drawHandLine();
+                this.drawEffects(); // **NEW**: Call the effect drawing function
+            }
+            
+            // **NEW**: Function dedicated to drawing the emoji effect
+            drawEffects() {
+                if (!this.effectState.active) return;
+                
+                this.ctx.font = `${this.effectState.size}px Arial`;
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                this.ctx.fillText('🔥', this.effectState.x, this.effectState.y);
+            }
+
+            drawTargetLine() {
+                const start = this.getTargetLineStart(), end = this.getTargetLineEnd();
+                this.ctx.strokeStyle = '#ff4444'; this.ctx.lineWidth = 8; this.ctx.lineCap = 'round';
+                this.ctx.shadowColor = '#ff4444'; this.ctx.shadowBlur = 10;
+                this.ctx.beginPath(); this.ctx.moveTo(start.x, start.y); this.ctx.lineTo(end.x, end.y); this.ctx.stroke();
+                this.ctx.shadowBlur = 0;
+            }
+
+            drawHandLine() {
+                const intersection = this.lineIntersection(this.handLine.start, this.handLine.end, this.getTargetLineStart(), this.getTargetLineEnd());
+                this.ctx.strokeStyle = intersection ? '#ffff00' : '#44ff44';
+                this.ctx.lineWidth = 6; this.ctx.lineCap = 'round';
+                this.ctx.shadowColor = intersection ? '#ffff00' : '#44ff44'; this.ctx.shadowBlur = 8;
+                this.ctx.beginPath(); this.ctx.moveTo(this.handLine.start.x, this.handLine.start.y); this.ctx.lineTo(this.handLine.end.x, this.handLine.end.y); this.ctx.stroke();
+                this.ctx.shadowBlur = 0;
+                if (intersection) { this.ctx.fillStyle = '#ff0000'; this.ctx.beginPath(); this.ctx.arc(intersection.x, intersection.y, 8, 0, Math.PI * 2); this.ctx.fill(); }
+                this.ctx.fillStyle = '#44ff44'; this.ctx.beginPath(); this.ctx.arc(this.handLine.start.x, this.handLine.start.y, 8, 0, Math.PI * 2); this.ctx.fill();
+                this.ctx.fillStyle = 'white'; this.ctx.font = 'bold 10px Arial'; this.ctx.textAlign = 'center'; this.ctx.fillText('Elbow', this.handLine.start.x, this.handLine.start.y - 15);
+                this.ctx.fillStyle = '#ffff44'; this.ctx.beginPath(); this.ctx.arc(this.handLine.end.x, this.handLine.end.y, 10, 0, Math.PI * 2); this.ctx.fill();
+                this.ctx.fillStyle = 'black'; this.ctx.font = 'bold 10px Arial'; this.ctx.fillText('Hand', this.handLine.end.x, this.handLine.end.y - 15);
+            }
+
+            gameLoop() {
+                this.draw();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => new LineVisualizer());
+    </script>
+</body>
+</html>
